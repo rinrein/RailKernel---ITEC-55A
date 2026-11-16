@@ -1,0 +1,2347 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RailKernel OS v1.0 — Automated LRT/MRT Central Signaling & Track Dispatch</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <!-- Three.js r128 CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        kernel: {
+                            bg: '#070b14',
+                            panel: '#0f172a',
+                            border: '#1e293b',
+                            accent: '#38bdf8'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #060a12;
+            color: #f1f5f9;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+        }
+        /* Custom Glassmorphism & Scrollbars */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.82);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(56, 189, 248, 0.16);
+        }
+        .glass-card {
+            background: rgba(30, 41, 59, 0.55);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(148, 163, 184, 0.14);
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #090d16;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+
+        /* 3D Viewport Container & Floating HUD Labels */
+        #three-container {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+            background: radial-gradient(circle at center, #0f172a 0%, #050811 100%);
+        }
+        #three-canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+        }
+        #three-canvas:active {
+            cursor: grabbing;
+        }
+        .train-hud-label {
+            position: absolute;
+            pointer-events: auto;
+            transform: translate(-50%, -100%);
+            transition: opacity 0.15s ease;
+            z-index: 15;
+            user-select: none;
+        }
+
+        /* Animations for Kernel Mode & Deadlock Alert */
+        @keyframes pulse-fast {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.65; transform: scale(0.98); }
+        }
+        .animate-kernel-pulse {
+            animation: pulse-fast 1.2s infinite ease-in-out;
+        }
+        @keyframes deadlock-flash {
+            0%, 100% { border-color: rgba(239, 68, 68, 0.9); box-shadow: 0 0 20px rgba(239, 68, 68, 0.45); }
+            50% { border-color: rgba(239, 68, 68, 0.2); box-shadow: 0 0 4px rgba(239, 68, 68, 0.1); }
+        }
+        .deadlock-border {
+            animation: deadlock-flash 1s infinite;
+        }
+
+        /* Range slider styling for Time Machine */
+        input[type=range].time-scrubber {
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            cursor: pointer;
+        }
+        input[type=range].time-scrubber::-webkit-slider-runnable-track {
+            background: #1e293b;
+            height: 8px;
+            border-radius: 999px;
+            border: 1px solid #334155;
+        }
+        input[type=range].time-scrubber::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            margin-top: -5px;
+            background-color: #38bdf8;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #38bdf8;
+            border: 2px solid #ffffff;
+        }
+    
+        :focus-visible { outline: 3px solid #fbbf24 !important; outline-offset: 2px; border-radius: 6px; }
+        button, select, summary { min-height: 32px; }
+        kbd { background:#1e293b; border:1px solid #475569; border-radius:4px; padding:0 4px; font-family:'JetBrains Mono',monospace; font-size:10px; }
+        .large-text { font-size: 18px; }
+        .large-text [class*="text-["] { font-size: 0.85rem !important; }
+        .large-text .text-xs { font-size: 0.95rem !important; line-height: 1.4; }
+        .hc { color: #fff; }
+        .hc .text-slate-400, .hc .text-slate-500, .hc .text-slate-300 { color: #e2e8f0 !important; }
+        .hc .border-slate-800, .hc .border-slate-700 { border-color: #94a3b8 !important; }
+        .hc .glass-panel, .hc .glass-card { background: rgba(2, 6, 23, 0.96); }
+        .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+        @media (prefers-reduced-motion: reduce) { .animate-ping, .animate-kernel-pulse { animation: none !important; } }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-sky-500 selection:text-slate-950">
+    <a href="#upper-story-3d" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-amber-400 focus:text-slate-950 focus:px-3 focus:py-2 focus:rounded-lg">Skip to 3D simulation</a>
+    <a href="#lower-story-os" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-48 focus:z-[100] focus:bg-amber-400 focus:text-slate-950 focus:px-3 focus:py-2 focus:rounded-lg">Skip to process table</a>
+    <!-- Display options (accessibility) -->
+    <div class="fixed bottom-3 right-3 z-40 flex flex-col items-end gap-2">
+        <div id="a11y-panel" role="group" aria-label="Display options" class="hidden glass-panel rounded-xl p-3 text-xs w-56 space-y-2 shadow-2xl">
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="opt-large" onchange="applyA11y()" class="w-4 h-4"> Larger text</label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="opt-hc" onchange="applyA11y()" class="w-4 h-4"> High contrast</label>
+            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="opt-motion" onchange="applyA11y()" class="w-4 h-4"> Reduce motion</label>
+        </div>
+        <button id="a11y-btn" onclick="toggleA11yPanel()" aria-expanded="false" aria-controls="a11y-panel" class="glass-panel px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-100 hover:bg-slate-800/90 shadow-lg">♿ Display options</button>
+    </div>
+
+    <!-- =====================================================================
+         1. TOP HEADER & KERNEL STATUS BAR
+    ====================================================================== -->
+    <header class="glass-panel sticky top-0 z-30 px-3 py-2.5 border-b border-slate-800/90 shadow-lg">
+        <div class="max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-3">
+            <!-- Brand & System Title -->
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-md shadow-sky-500/20 border border-sky-300/30">
+                    <!-- Train + CPU Icon -->
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-sm sm:text-base font-extrabold tracking-tight text-white">
+                            RailKernel <span class="text-sky-400 font-mono text-xs sm:text-sm">OS v1.0</span>
+                        </h1>
+                        <span class="hidden md:inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                            ITEC 55A FINALS
+                        </span>
+                    </div>
+                    <p class="text-[11px] text-slate-400 hidden sm:block">
+                        Automated LRT/MRT Central Signaling &amp; Track Dispatch Mini-OS Simulator
+                    </p>
+                </div>
+            </div>
+
+            <!-- Live USER MODE / KERNEL MODE Indicator Badge -->
+            <div class="flex items-center gap-2">
+                <div id="cpu-mode-badge" class="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono font-bold transition-all duration-300 bg-emerald-950/80 border-emerald-500/50 text-emerald-300">
+                    <span id="cpu-mode-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]"></span>
+                    <span id="cpu-mode-text">USER MODE: TRACK EXECUTION</span>
+                </div>
+
+                <!-- Concept Guide Button for Student Presentation -->
+                <button onclick="toggleGuideModal(true)" class="px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-sky-300 border border-sky-500/30 text-xs font-medium flex items-center gap-1.5 transition" title="Open OS-to-Railway Architecture Guide">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <span class="hidden lg:inline">OS Mapping Guide</span>
+                </button>
+            </div>
+
+            <!-- 2-Story / Dual-View Mode Switcher (The Highlight Feature) -->
+            <div class="flex items-center bg-slate-900/95 p-1 rounded-xl border border-slate-800">
+                <button id="view-btn-split" onclick="setViewMode('split')" class="px-2.5 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 bg-sky-500 text-slate-950 shadow">
+                    <span>🏢</span>
+                    <span>2-Story Split View</span>
+                </button>
+                <button id="view-btn-3d" onclick="setViewMode('3d')" class="px-2.5 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 text-slate-300 hover:text-white">
+                    <span>🚝</span>
+                    <span>3D Transit World</span>
+                </button>
+                <button id="view-btn-os" onclick="setViewMode('os')" class="px-2.5 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 text-slate-300 hover:text-white">
+                    <span>💻</span>
+                    <span>OS Kernel Deck</span>
+                </button>
+            </div>
+
+            <!-- Algorithm Selector, Quantum Input & Test Case Scenarios -->
+            <div class="flex flex-wrap items-center gap-2">
+                <!-- Clock Tick Display -->
+                <div class="px-3 py-1 rounded-lg bg-slate-900 border border-slate-700 flex items-center gap-1.5 font-mono">
+                    <span class="text-[11px] text-slate-400">CLOCK:</span>
+                    <span id="clock-tick-display" class="text-sm font-bold text-sky-400">T=0</span>
+                </div>
+
+                <!-- CPU Scheduling Algorithm Selector -->
+                <div class="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
+                    <label for="algo-select" class="text-[11px] text-slate-400 font-mono">SCHED:</label>
+                    <select id="algo-select" onchange="onAlgorithmChange()" class="bg-transparent text-xs font-semibold text-white focus:outline-none cursor-pointer">
+                        <option value="FCFS" class="bg-slate-900">FCFS (First-Come, First-Served)</option>
+                        <option value="SJF" class="bg-slate-900">SJF (Shortest Job First)</option>
+                        <option value="RR" class="bg-slate-900">Round Robin (Time Quantum)</option>
+                        <option value="PRIORITY" class="bg-slate-900">Priority (Express Override)</option>
+                    </select>
+                </div>
+
+                <!-- Time Quantum Input (Shown/Active for Round Robin) -->
+                <div id="quantum-box" class="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
+                    <label for="quantum-input" class="text-[11px] text-slate-400 font-mono">Q:</label>
+                    <input id="quantum-input" type="number" min="1" max="10" value="2" onchange="onQuantumChange()" class="w-10 bg-slate-800 text-center text-xs font-mono font-bold text-sky-300 rounded border border-slate-600 focus:outline-none">
+                </div>
+
+                <!-- Test Case Presets (Specific Objective 4) -->
+                <div class="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
+                    <label for="scenario-select" class="text-[11px] text-slate-400 font-mono hidden xl:inline">TEST CASE:</label>
+                    <select id="scenario-select" onchange="loadPresetScenario(this.value)" class="bg-transparent text-xs font-medium text-amber-300 focus:outline-none cursor-pointer">
+                        <option value="standard" class="bg-slate-900">Case 1: Standard Multi-Train Workload</option>
+                        <option value="simultaneous" class="bg-slate-900">Case 2: Simultaneous Peak-Hour Arrivals (T=0)</option>
+                        <option value="iostress" class="bg-slate-900">Case 3: Extended Station Boarding &amp; RR Stress</option>
+                        <option value="deadlock" class="bg-slate-900">Case 4: Circular-Wait Track Gridlock Scenario</option>
+                        <option value="rushhour" class="bg-slate-900">Case 5: Morning Rush-Hour Wave (6 trains)</option>
+                        <option value="convoy" class="bg-slate-900">Case 6: Convoy Effect (one long train blocks short ones)</option>
+                        <option value="emergency" class="bg-slate-900">Case 7: Emergency / VIP Priority Override</option>
+                        <option value="fairness" class="bg-slate-900">Case 8: Round Robin Fairness (equal long trains)</option>
+                        <option value="offpeak" class="bg-slate-900">Case 9: Off-Peak Idle Gaps (CPU idle)</option>
+                        <option value="single" class="bg-slate-900">Case 10: Single Train Baseline</option>
+                        <option value="fullload" class="bg-slate-900">Case 11: Maximum Load (6 trains at T=0)</option>
+                        <option value="busygridlock" class="bg-slate-900">Case 12: Gridlock With Busy Queue</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- =====================================================================
+         2. TIME MACHINE & KERNEL SYSCALL CONTROLS BAR
+    ====================================================================== -->
+    <section class="bg-slate-900/90 border-b border-slate-800 px-3 py-2 z-20">
+        <div class="max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-3">
+            <!-- Left: Playback & Time Machine Scrubber -->
+            <div class="flex flex-wrap items-center gap-2 flex-1 min-w-[300px]">
+                <button id="btn-play-pause" onclick="togglePlayPause()" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow transition">
+                    <span id="play-icon">▶</span>
+                    <span id="play-text">Auto Dispatch</span>
+                </button>
+
+                <button onclick="stepBackward()" id="btn-step-back" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-mono text-xs transition disabled:opacity-40" title="Rewind 1 Clock Tick">
+                    ⏮ -1 Tick
+                </button>
+
+                <button onclick="stepForward()" id="btn-step-fwd" class="px-2.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-mono text-xs font-semibold transition shadow">
+                    +1 Tick ⏭
+                </button>
+
+                <button onclick="resetSimulation()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs transition" title="Reset Simulation to T=0">
+                    ↺ Reset
+                </button>
+
+                <!-- Time Machine Scrubber Slider -->
+                <div class="flex items-center gap-2 bg-slate-950/90 px-3 py-1 rounded-lg border border-slate-800 flex-1 max-w-md">
+                    <span class="text-[11px] font-mono text-sky-400 whitespace-nowrap flex items-center gap-1">
+                        <span>⏱ TIME MACHINE:</span>
+                    </span>
+                    <input id="time-scrubber" type="range" min="0" max="0" value="0" oninput="scrubToTick(this.value)" class="time-scrubber w-full">
+                    <span id="scrubber-label" class="text-[11px] font-mono text-slate-400 whitespace-nowrap">0 / 0</span>
+                </div>
+            </div>
+
+            <!-- Right: Kernel System Call & Interrupt Action Buttons -->
+            <div class="flex flex-wrap items-center gap-2">
+                <button onclick="openTrainModal()" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow transition">
+                    <span>+ Dispatch Train</span>
+                    <span class="font-mono text-[10px] bg-indigo-900/80 px-1.5 py-0.5 rounded text-indigo-200">sys_fork()</span>
+                </button>
+
+                <button onclick="triggerStationBoardingIO()" class="px-3 py-1.5 rounded-lg bg-purple-600/90 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow transition" title="Send currently RUNNING train to Passenger Station Platform (I/O Wait State)">
+                    <span>🚏 Station Boarding</span>
+                    <span class="font-mono text-[10px] bg-purple-950/80 px-1.5 py-0.5 rounded text-purple-200">sys_io_wait()</span>
+                </button>
+
+                <button id="btn-deadlock-action" onclick="handleDeadlockButton()" class="px-3 py-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow transition">
+                    <span id="deadlock-btn-icon">⚠️</span>
+                    <span id="deadlock-btn-text">Inject Track Gridlock</span>
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- =====================================================================
+         3. MAIN 2-STORY WORKSPACE (UPPER 3D WORLD + LOWER OS KERNEL DECK)
+    ====================================================================== -->
+    <main class="flex-1 flex flex-col max-w-[1920px] w-full mx-auto px-3 py-2 gap-2.5">
+
+        <!-- =================================================================
+             UPPER STORY: 3D LRT/MRT CENTRAL SIGNALING & INTERLOCKING WORLD
+        ================================================================== -->
+        <section id="upper-story-3d" aria-label="Upper story: 3D railway simulation" class="relative w-full flex flex-col rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950" style="height:clamp(480px,74vh,660px)">
+            <!-- Toolbar sits ABOVE the canvas, so nothing can cover the 3D view -->
+            <div class="shrink-0 glass-panel border-b border-slate-800 px-2.5 py-2 flex flex-col gap-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="w-2 h-2 rounded-full bg-sky-400 animate-ping shrink-0"></span>
+                        <h2 class="text-xs font-bold text-white">Upper story: 3D railway (the CPU world)</h2>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Camera controls">
+                        <button onclick="setCameraPreset('iso')" title="Key 1" class="glass-panel hover:bg-slate-800/90 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition text-slate-200">🎥 Overview</button>
+                        <button onclick="setCameraPreset('junction')" title="Key 2" class="glass-panel hover:bg-slate-800/90 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition text-emerald-300">🎯 CPU junction</button>
+                        <button onclick="setCameraPreset('station')" title="Key 3" class="glass-panel hover:bg-slate-800/90 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition text-purple-300">🚏 Station</button>
+                        <button onclick="setCameraPreset('top')" title="Key 4" class="glass-panel hover:bg-slate-800/90 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition text-sky-300">🗺️ Top view</button>
+                        <button onclick="zoomBy(-6)" aria-label="Zoom in" title="Zoom in (+)" class="glass-panel hover:bg-slate-800/90 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition text-slate-200 font-bold w-8">+</button>
+                        <button onclick="zoomBy(6)" aria-label="Zoom out" title="Zoom out (-)" class="glass-panel hover:bg-slate-800/90 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition text-slate-200 font-bold w-8">−</button>
+                        <button id="btn-tour" onclick="toggleTour()" class="glass-panel hover:bg-slate-800/90 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition text-amber-300 font-semibold">🎬 Guided tour</button>
+                        <button id="btn-sound" onclick="toggleSound()" class="glass-panel hover:bg-slate-800/90 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition text-slate-200 font-semibold">🔊 Sound: On</button>
+                        <button onclick="toggleHelp()" aria-label="Show or hide help" aria-controls="help-panel" class="glass-panel hover:bg-slate-800/90 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 transition text-sky-300 font-semibold">❓ Help</button>
+                    </div>
+                </div>
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono" aria-label="Train state colors">
+                    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-slate-400"></span>NEW (depot)</span>
+                    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-amber-400"></span>READY (queue)</span>
+                    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-400"></span>RUNNING (CPU junction)</span>
+                    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-purple-400"></span>WAITING (station I/O)</span>
+                    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-cyan-400"></span>TERMINATED (cleared)</span>
+                </div>
+            </div>
+            <!-- Tour caption: in the page flow, never on top of the 3D view -->
+            <div id="tour-caption" role="status" aria-live="polite" class="hidden shrink-0 bg-amber-950/80 border-b border-amber-500/40 px-3 py-2 text-xs text-amber-50 flex items-start gap-3">
+                <span id="tour-step" class="font-mono font-bold text-amber-300 mt-0.5">1/5</span>
+                <p id="tour-text" class="flex-1 leading-relaxed"></p>
+                <button onclick="tourGo(tourIdx-1)" class="px-2 rounded bg-slate-800 hover:bg-slate-700" aria-label="Previous tour step">‹ Back</button>
+                <button onclick="tourGo(tourIdx+1)" class="px-2 rounded bg-slate-800 hover:bg-slate-700" aria-label="Next tour step">Next ›</button>
+                <button onclick="tourStop()" class="px-2 rounded bg-slate-800 hover:bg-slate-700" aria-label="Stop tour">✕ Stop</button>
+            </div>
+            <div class="relative flex-1 min-h-0">
+                <div id="three-container">
+                    <canvas id="three-canvas" tabindex="0" role="img" aria-label="3D railway. Drag to rotate. Use plus and minus to zoom, Q and E to rotate."></canvas>
+                    <div id="train-hud-layer" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
+                </div>
+                <div id="help-panel" class="absolute top-2 right-2 z-20 w-[min(92%,270px)] glass-panel rounded-xl p-3 text-[11px] text-slate-200 shadow-xl">
+                    <button onclick="toggleHelp()" class="absolute top-1 right-2 text-slate-400 hover:text-white" aria-label="Close help">✕</button>
+                    <p class="font-bold text-sky-300 mb-1">How to use</p>
+                    <ul class="space-y-0.5 leading-relaxed">
+                        <li>▶ <b>Auto Dispatch</b> or <kbd>Space</kbd>: run</li>
+                        <li>← / → : step time back / forward</li>
+                        <li>Click a train or table row: follow it</li>
+                        <li>Drag: rotate. <kbd>Q</kbd>/<kbd>E</kbd>: rotate</li>
+                        <li>+ / − buttons or keys: zoom (Ctrl+scroll too)</li>
+                        <li><kbd>1</kbd>–<kbd>4</kbd>: camera views. Double-click: reset</li>
+                        <li><kbd>R</kbd>: reset. <kbd>Esc</kbd>: close windows</li>
+                    </ul>
+                </div>
+                <div class="absolute bottom-2 left-2 z-20 glass-panel px-3 py-2 rounded-xl border border-slate-700/80 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs max-w-[calc(100%-1rem)]">
+                    <div><div class="text-[10px] font-mono text-slate-400">Junction (CPU) lock</div><div id="hud-active-train" class="font-mono font-bold text-sm text-emerald-400">IDLE (SIGNAL RED)</div></div>
+                    <div class="h-7 w-px bg-slate-700 hidden sm:block"></div>
+                    <div><div class="text-[10px] font-mono text-slate-400">Signal aspect</div><div id="hud-signal-aspect" class="font-mono font-semibold text-xs text-amber-300">STANDBY / AWAITING DISPATCH</div></div>
+                </div>
+                <div id="hud-deadlock-banner" role="alert" class="hidden absolute inset-x-0 bottom-[4.75rem] mx-auto w-[min(94%,660px)] z-20 glass-panel deadlock-border bg-rose-950/95 px-4 py-2.5 rounded-2xl border-2 border-rose-500 flex flex-wrap items-center gap-3 shadow-2xl">
+                    <span class="text-2xl" aria-hidden="true">🚨</span>
+                    <div class="flex-1 min-w-[200px]">
+                        <div class="text-xs font-mono font-extrabold text-rose-300">DEADLOCK: TRACK GRIDLOCK DETECTED</div>
+                        <div id="hud-deadlock-desc" class="text-xs text-rose-100">Two trains are waiting for each other forever.</div>
+                    </div>
+                    <button onclick="resolveTrackGridlock()" class="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs whitespace-nowrap shadow-lg transition">⚡ Execute Kernel Preemption</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- =================================================================
+             "WHY?" DECISION EXPLAINER BANNER (BRIDGES UPPER & LOWER STORY)
+        ================================================================== -->
+        <section class="glass-panel rounded-xl px-4 py-2.5 border border-sky-500/30 shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div class="flex items-start sm:items-center gap-3">
+                <span class="px-2.5 py-1 rounded-lg bg-sky-500/20 border border-sky-400/40 text-sky-300 font-mono text-xs font-bold whitespace-nowrap">
+                    💡 WHY THIS DECISION?
+                </span>
+                <p id="why-explainer-text" role="status" aria-live="polite" class="text-xs sm:text-sm text-slate-200 leading-relaxed">
+                    Simulation initialized at <span class="font-mono text-sky-400">T=0</span>. Click <span class="font-semibold text-emerald-400">+1 Tick</span> or <span class="font-semibold text-emerald-400">Auto Dispatch</span> to watch the Central Signaling Kernel evaluate the Ready Queue and grant track clearance.
+                </p>
+            </div>
+            <div id="why-syscall-pill" class="px-2.5 py-1 rounded bg-slate-900 border border-slate-700 font-mono text-[11px] text-amber-300 whitespace-nowrap self-end sm:self-center">
+                SYSCALL: sys_init()
+            </div>
+        </section>
+
+        <!-- =================================================================
+             LOWER STORY: OS KERNEL CONSOLE (PCB/TCB, GANTT, DEADLOCK & LOGS)
+        ================================================================== -->
+        <section id="lower-story-os" class="grid grid-cols-1 lg:grid-cols-12 gap-3 pb-4">
+
+            <!-- LEFT / CENTER 7 COLUMNS: SEARCHABLE PCB & TCB INSPECTOR TABLE -->
+            <div class="lg:col-span-7 glass-panel rounded-2xl p-3.5 flex flex-col gap-3 border border-slate-800">
+                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-indigo-400"></span>
+                        <h2 class="text-xs sm:text-sm font-bold uppercase tracking-wider text-white">
+                            Lower Story: Process (PCB) &amp; Onboard Thread (TCB) Table
+                        </h2>
+                    </div>
+
+                    <!-- Search Input & State Filter Pills (Objective 3: Instant Query Response) -->
+                    <div class="flex flex-wrap items-center gap-2">
+                        <div class="relative">
+                            <input id="pcb-search-input" type="text" oninput="renderPCBTable()" placeholder="Search PID or consist..." class="w-40 sm:w-48 bg-slate-900/90 border border-slate-700 rounded-lg pl-7 pr-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500">
+                            <svg class="w-3.5 h-3.5 text-slate-400 absolute left-2 top-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5-State Filter Pills -->
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex flex-wrap items-center gap-1" id="state-filter-bar">
+                        <button onclick="setPCBStateFilter('ALL')" data-filter="ALL" class="pcb-filter-btn px-2.5 py-1 rounded-md text-[11px] font-mono font-semibold bg-sky-500 text-slate-950">ALL</button>
+                        <button onclick="setPCBStateFilter('NEW')" data-filter="NEW" class="pcb-filter-btn px-2.5 py-1 rounded-md text-[11px] font-mono bg-slate-800 text-slate-300 hover:bg-slate-700">NEW</button>
+                        <button onclick="setPCBStateFilter('READY')" data-filter="READY" class="pcb-filter-btn px-2.5 py-1 rounded-md text-[11px] font-mono bg-slate-800 text-amber-300 hover:bg-slate-700">READY</button>
+                        <button onclick="setPCBStateFilter('RUNNING')" data-filter="RUNNING" class="pcb-filter-btn px-2.5 py-1 rounded-md text-[11px] font-mono bg-slate-800 text-emerald-300 hover:bg-slate-700">RUNNING</button>
+                        <button onclick="setPCBStateFilter('WAITING')" data-filter="WAITING" class="pcb-filter-btn px-2.5 py-1 rounded-md text-[11px] font-mono bg-slate-800 text-purple-300 hover:bg-slate-700">WAITING (I/O)</button>
+                        <button onclick="setPCBStateFilter('TERMINATED')" data-filter="TERMINATED" class="pcb-filter-btn px-2.5 py-1 rounded-md text-[11px] font-mono bg-slate-800 text-cyan-300 hover:bg-slate-700">TERMINATED</button>
+                    </div>
+                    <span id="pcb-count-label" class="text-[11px] font-mono text-slate-400">Showing 4 trains</span>
+                </div>
+
+                <!-- PCB & TCB Table -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-[10px] font-mono uppercase text-slate-400 bg-slate-900/60">
+                                <th class="py-2 px-2.5">PID &amp; Consist</th>
+                                <th class="py-2 px-2">5-State PCB</th>
+                                <th class="py-2 px-2 text-center">Prio</th>
+                                <th class="py-2 px-2 text-center">AT</th>
+                                <th class="py-2 px-2.5">Burst (Rem/Tot)</th>
+                                <th class="py-2 px-2">Telemetry Registers</th>
+                                <th class="py-2 px-2.5">Onboard TCB Threads</th>
+                                <th class="py-2 px-2 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pcb-table-body" class="divide-y divide-slate-800/70 text-xs">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Live Gantt Chart Timeline Section -->
+                <div class="mt-auto pt-2 border-t border-slate-800 flex flex-col gap-2">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-bold uppercase tracking-wider text-sky-400 font-mono">📊 Live CPU (Central Junction) Gantt Chart</span>
+                            <span class="text-[11px] text-slate-400 hidden sm:inline">(Click any tick block to rewind Time Machine)</span>
+                        </div>
+                        <span id="gantt-quantum-badge" class="text-[11px] font-mono text-slate-400">1 Block = 1 Clock Tick</span>
+                    </div>
+
+                    <!-- Scrollable Gantt Bar -->
+                    <div id="gantt-chart-container" class="flex items-center gap-1 overflow-x-auto py-2 px-2 bg-slate-950/90 rounded-xl border border-slate-800 min-h-[60px]">
+                        <!-- Gantt blocks injected dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT 5 COLUMNS: OS METRICS, DEADLOCK RESOLVER & KERNEL SYSCALL LOGS -->
+            <div class="lg:col-span-5 flex flex-col gap-3">
+
+                <!-- Real-Time Scheduling Performance Metrics -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div class="glass-panel p-2.5 rounded-xl border border-slate-800">
+                        <div class="text-[10px] font-mono text-slate-400 uppercase">Junction CPU Util</div>
+                        <div id="metric-cpu-util" class="text-lg font-mono font-extrabold text-emerald-400 mt-0.5">0%</div>
+                    </div>
+                    <div class="glass-panel p-2.5 rounded-xl border border-slate-800">
+                        <div class="text-[10px] font-mono text-slate-400 uppercase">Avg Turnaround</div>
+                        <div id="metric-avg-tat" class="text-lg font-mono font-extrabold text-sky-400 mt-0.5">0.0t</div>
+                    </div>
+                    <div class="glass-panel p-2.5 rounded-xl border border-slate-800">
+                        <div class="text-[10px] font-mono text-slate-400 uppercase">Avg Wait Time</div>
+                        <div id="metric-avg-wt" class="text-lg font-mono font-extrabold text-amber-400 mt-0.5">0.0t</div>
+                    </div>
+                    <div class="glass-panel p-2.5 rounded-xl border border-slate-800">
+                        <div class="text-[10px] font-mono text-slate-400 uppercase">Context Switches</div>
+                        <div id="metric-ctx-switches" class="text-lg font-mono font-extrabold text-purple-400 mt-0.5">0</div>
+                    </div>
+                </div>
+
+                <!-- Wildcard Module: Track Gridlock (Deadlock) Resolver & Coffman Inspector -->
+                <div id="deadlock-resolver-card" class="glass-panel rounded-2xl p-3.5 border border-slate-800 flex flex-col gap-2.5 transition-all">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span id="deadlock-status-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-white">
+                                Track Gridlock (Deadlock) Resolver Module
+                            </h3>
+                        </div>
+                        <span id="deadlock-badge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40">
+                            NO CIRCULAR WAIT
+                        </span>
+                    </div>
+
+                    <!-- 4 Coffman Conditions Grid -->
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px] font-mono">
+                        <div id="coffman-1" class="p-1.5 rounded-lg bg-slate-900/90 border border-slate-800 flex flex-col">
+                            <span class="text-slate-400">1. Mutual Exclusion</span>
+                            <span class="font-bold text-amber-300 mt-0.5">ACTIVE (1 Track)</span>
+                        </div>
+                        <div id="coffman-2" class="p-1.5 rounded-lg bg-slate-900/90 border border-slate-800 flex flex-col">
+                            <span class="text-slate-400">2. Hold &amp; Wait</span>
+                            <span id="coffman-2-val" class="font-bold text-emerald-400 mt-0.5">SAFE</span>
+                        </div>
+                        <div id="coffman-3" class="p-1.5 rounded-lg bg-slate-900/90 border border-slate-800 flex flex-col">
+                            <span class="text-slate-400">3. No Preemption</span>
+                            <span id="coffman-3-val" class="font-bold text-amber-300 mt-0.5">LOCKED</span>
+                        </div>
+                        <div id="coffman-4" class="p-1.5 rounded-lg bg-slate-900/90 border border-slate-800 flex flex-col">
+                            <span class="text-slate-400">4. Circular Wait</span>
+                            <span id="coffman-4-val" class="font-bold text-emerald-400 mt-0.5">NONE</span>
+                        </div>
+                    </div>
+
+                    <!-- Resource Allocation Status & Resolver Action -->
+                    <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-950/80 px-3 py-2 rounded-xl border border-slate-800 text-xs">
+                        <div id="deadlock-graph-text" class="font-mono text-[11px] text-slate-300">
+                            Interlocking Graph: <span class="text-emerald-400">All switch points clear or sequentially queued.</span>
+                        </div>
+                        <button id="btn-resolve-card" onclick="resolveTrackGridlock()" disabled class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-bold text-xs transition">
+                            Preempt &amp; Rollback
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Kernel Syscall & Dispatch Event Log -->
+                <div class="glass-panel rounded-2xl p-3.5 border border-slate-800 flex-1 flex flex-col gap-2 min-h-[210px]">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-sky-400"></span>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-white font-mono">
+                                Kernel System Call &amp; Dispatch Log
+                            </h3>
+                        </div>
+                        <input id="log-search-input" type="text" oninput="renderKernelLogs()" placeholder="Filter logs (e.g. fork, switch)..." class="w-44 bg-slate-900 border border-slate-700 rounded-lg px-2 py-0.5 text-[11px] text-white placeholder-slate-500 focus:outline-none focus:border-sky-500">
+                    </div>
+
+                    <div id="kernel-log-list" class="flex-1 overflow-y-auto space-y-1.5 max-h-[190px] pr-1 font-mono text-[11px]">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- =====================================================================
+         4. MODAL: DISPATCH NEW TRAIN CONSIST (sys_fork PCB CREATION WITH VALIDATION)
+    ====================================================================== -->
+    <div id="train-modal" role="dialog" aria-modal="true" aria-label="Add train" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass-panel w-full max-w-md rounded-2xl border border-sky-500/40 shadow-2xl p-5">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div>
+                    <h3 class="text-base font-bold text-white flex items-center gap-2">
+                        <span>🚝 Dispatch New Train Consist</span>
+                        <span class="text-xs font-mono px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">sys_fork()</span>
+                    </h3>
+                    <p class="text-xs text-slate-400 mt-0.5">Allocates a new Process Control Block (PCB) &amp; 3 onboard TCB threads.</p>
+                </div>
+                <button onclick="closeTrainModal()" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
+            </div>
+
+            <form id="train-create-form" onsubmit="handleCreateTrain(event)" class="mt-4 space-y-3">
+                <!-- Validation Error Banner -->
+                <div id="modal-error-box" class="hidden p-2.5 rounded-lg bg-rose-950/90 border border-rose-500 text-rose-200 text-xs font-medium"></div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-mono text-slate-300 mb-1">Train PID (Unique)*</label>
+                        <input id="input-pid" type="text" placeholder="e.g., LRT-105" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-sky-400">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-mono text-slate-300 mb-1">Consist Name / Route*</label>
+                        <input id="input-name" type="text" placeholder="e.g., Monumento Express" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-sky-400">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-3 gap-3">
+                    <div>
+                        <label class="block text-xs font-mono text-slate-300 mb-1">Arrival Tick (AT)*</label>
+                        <input id="input-arrival" type="number" min="0" max="99" value="0" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-sky-400">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-mono text-slate-300 mb-1">Burst Time (Ticks)*</label>
+                        <input id="input-burst" type="number" min="1" max="15" value="4" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-sky-400">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-mono text-slate-300 mb-1">Priority (1=High)*</label>
+                        <input id="input-priority" type="number" min="1" max="10" value="2" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-sky-400">
+                    </div>
+                </div>
+
+                <div class="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-[11px] text-slate-300 font-mono">
+                    <div class="text-sky-400 font-semibold mb-1">Auto-Allocated Onboard Subsystem Threads (TCB):</div>
+                    <div>• TCB-1: Traction Propulsion (750V DC Overhead)</div>
+                    <div>• TCB-2: Pneumatic Automated Doors Interlock</div>
+                    <div>• TCB-3: Passenger Comms &amp; Telemetry Link</div>
+                </div>
+
+                <div class="flex items-center justify-end gap-2 pt-2">
+                    <button type="button" onclick="closeTrainModal()" class="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+                        Cancel
+                    </button>
+                    <button type="submit" class="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 text-xs font-bold shadow-lg">
+                        Create PCB &amp; Dispatch
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- =====================================================================
+         5. MODAL: OS-TO-RAILWAY CONCEPT GUIDE (FOR PRESENTATION & DEFENSE)
+    ====================================================================== -->
+    <div id="guide-modal" role="dialog" aria-modal="true" aria-label="Architecture guide" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass-panel w-full max-w-3xl rounded-2xl border border-sky-500/40 shadow-2xl p-5 max-h-[88vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div>
+                    <h3 class="text-base font-bold text-white">🎓 RailKernel OS-to-Railway Architectural Mapping Guide</h3>
+                    <p class="text-xs text-slate-400">Quick reference guide for ITEC 55A project demonstration &amp; defense</p>
+                </div>
+                <button onclick="toggleGuideModal(false)" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 my-4 text-xs">
+                <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+                    <div class="font-mono font-bold text-sky-400">1. CPU Core ➔ Central Interlocking Junction</div>
+                    <p class="text-slate-300 mt-1">Only one train consist can actively cross the Central Interlocking diamond junction at a time, just like a single-core CPU executes one process at a time.</p>
+                </div>
+                <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+                    <div class="font-mono font-bold text-emerald-400">2. Process (PCB) ➔ Active Train Consist</div>
+                    <p class="text-slate-300 mt-1">Each train has a Process Control Block storing its PID, 5-state lifecycle status, Priority, Burst Time (ticks needed to clear the junction), and telemetry registers.</p>
+                </div>
+                <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+                    <div class="font-mono font-bold text-purple-400">3. I/O Wait (Blocked) ➔ Station Passenger Boarding</div>
+                    <p class="text-slate-300 mt-1">When a train pulls into the Passenger Station siding to board commuters, it yields the main track (CPU) so ready trains behind it can be dispatched without stalling traffic.</p>
+                </div>
+                <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+                    <div class="font-mono font-bold text-amber-400">4. Context Switch ➔ Track Switch Reassignment</div>
+                    <p class="text-slate-300 mt-1">When a train's Round Robin time quantum expires or it blocks for station boarding, the kernel saves its track sector register (`PC`) and switches signals to the next train.</p>
+                </div>
+                <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+                    <div class="font-mono font-bold text-indigo-400">5. Threads (TCB) ➔ Onboard Train Subsystems</div>
+                    <p class="text-slate-300 mt-1">Inside each train process, 3 lightweight threads share onboard power: <strong>Propulsion</strong> (active while Running), <strong>Automated Doors</strong> (active during Station I/O Wait), and <strong>Comms</strong>.</p>
+                </div>
+                <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+                    <div class="font-mono font-bold text-rose-400">6. Deadlock ➔ Single-Track Circular Gridlock</div>
+                    <p class="text-slate-300 mt-1">Occurs when two opposing trains hold track segments and block each other nose-to-nose. Resolved via Kernel Preemption (backing one train into the station siding).</p>
+                </div>
+            </div>
+
+            <div class="flex justify-end">
+                <button onclick="toggleGuideModal(false)" class="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs">
+                    Got It, Back to Simulator
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- =====================================================================
+         6. JAVASCRIPT ENGINE: OS KERNEL + TIME MACHINE + THREE.JS 3D WORLD
+    ====================================================================== -->
+    <script>
+        /***********************************************************************
+         * SECTION A: GLOBAL OS KERNEL STATE & PRESET WORKLOADS
+         ***********************************************************************/
+        const STATE_COLORS = {
+            NEW:        { hex: 0x94a3b8, css: '#94a3b8', badge: 'bg-slate-800 text-slate-300 border-slate-600' },
+            READY:      { hex: 0xf59e0b, css: '#f59e0b', badge: 'bg-amber-950/90 text-amber-300 border-amber-500/50' },
+            RUNNING:    { hex: 0x10b981, css: '#10b981', badge: 'bg-emerald-950/90 text-emerald-300 border-emerald-500/50' },
+            WAITING:    { hex: 0xa855f7, css: '#a855f7', badge: 'bg-purple-950/90 text-purple-300 border-purple-500/50' },
+            TERMINATED: { hex: 0x06b6d4, css: '#06b6d4', badge: 'bg-cyan-950/90 text-cyan-300 border-cyan-500/50' },
+            DEADLOCKED: { hex: 0xef4444, css: '#ef4444', badge: 'bg-rose-950/95 text-rose-300 border-rose-500' }
+        };
+
+        let osState = {
+            tick: 0,
+            algorithm: 'FCFS',
+            timeQuantum: 2,
+            currentQuantumUsed: 0,
+            cpuMode: 'USER', // 'USER' or 'KERNEL'
+            lastSyscall: 'sys_init()',
+            whyExplanation: 'Simulation initialized at T=0. Click +1 Tick or Auto Dispatch to evaluate the Ready Queue and grant Central Junction clearance.',
+            contextSwitches: 0,
+            deadlockActive: false,
+            deadlockPair: [],
+            activeRunningPid: null,
+            pcbList: [],
+            ganttHistory: [], // { tick, pid, state, mode }
+            syscallLogs: []   // { tick, mode, syscall, msg }
+        };
+
+        // Deep-cloned state snapshots for the Time Machine scrubber
+        let historySnapshots = [];
+        let playInterval = null;
+        let currentPCBFilter = 'ALL';
+        let currentViewMode = 'split';
+
+        // Default Preset Scenarios (Satisfies Specific Objective 4)
+        const SCENARIO_INFO = {
+            standard: 'Case 1: a normal mix of trains',
+            simultaneous: 'Case 2: four trains arrive at once',
+            iostress: 'Case 3: station boarding stress. Try Round Robin and press Station Boarding',
+            deadlock: 'Case 4: two trains block each other (deadlock)',
+            rushhour: 'Case 5: rush-hour wave of 6 trains arriving one after another',
+            convoy: 'Case 6: convoy effect. One long train delays short ones. Compare FCFS with SJF',
+            emergency: 'Case 7: emergency override. Compare Priority with FCFS',
+            fairness: 'Case 8: Round Robin fairness. Equal long trains plus a late short one. Try Q=1, 2 and 3',
+            offpeak: 'Case 9: off-peak gaps. The junction goes IDLE between trains',
+            single: 'Case 10: one train only (baseline, no waiting)',
+            fullload: 'Case 11: maximum load of 6 trains at T=0. Compare all four algorithms',
+            busygridlock: 'Case 12: deadlock while other trains are queued behind it'
+        };
+        const PRESET_SCENARIOS = {
+            standard: [
+                { pid: 'MRT-101', name: 'North Ave Commuter', arrival: 0, burst: 4, priority: 3 },
+                { pid: 'LRT-102', name: 'Doroteo Jose Express', arrival: 1, burst: 2, priority: 1 },
+                { pid: 'MRT-103', name: 'Shaw Maintenance', arrival: 2, burst: 5, priority: 4 },
+                { pid: 'LRT-104', name: 'Baclaran RushHour', arrival: 3, burst: 3, priority: 2 }
+            ],
+            simultaneous: [
+                { pid: 'MRT-201', name: 'Taft Peak Consist A', arrival: 0, burst: 5, priority: 3 },
+                { pid: 'LRT-202', name: 'Cubao Express VIP', arrival: 0, burst: 2, priority: 1 },
+                { pid: 'MRT-203', name: 'Ortigas Peak Consist B', arrival: 0, burst: 3, priority: 2 },
+                { pid: 'LRT-204', name: 'Roosevelt Shuttle', arrival: 0, burst: 4, priority: 4 }
+            ],
+            iostress: [
+                { pid: 'LRT-301', name: 'Recto High-Density', arrival: 0, burst: 6, priority: 2 },
+                { pid: 'MRT-302', name: 'Ayala Station Hopper', arrival: 0, burst: 5, priority: 2 },
+                { pid: 'LRT-303', name: 'Katipunan Express', arrival: 1, burst: 3, priority: 1 },
+                { pid: 'MRT-304', name: 'Magallanes Local', arrival: 2, burst: 4, priority: 3 }
+            ],
+            rushhour: [
+                { pid: 'MRT-501', name: 'Fairview Wave 1', arrival: 0, burst: 3, priority: 3 },
+                { pid: 'LRT-502', name: 'Monumento Local', arrival: 1, burst: 4, priority: 2 },
+                { pid: 'MRT-503', name: 'Quezon Ave Peak', arrival: 1, burst: 2, priority: 3 },
+                { pid: 'LRT-504', name: 'Carriedo Shuttle', arrival: 2, burst: 5, priority: 4 },
+                { pid: 'MRT-505', name: 'Ayala Express', arrival: 3, burst: 3, priority: 1 },
+                { pid: 'LRT-506', name: 'Pasay Rotunda', arrival: 4, burst: 2, priority: 2 }
+            ],
+            convoy: [
+                { pid: 'LRT-601', name: 'Heavy Maintenance Run', arrival: 0, burst: 8, priority: 3 },
+                { pid: 'MRT-602', name: 'Short Hop A', arrival: 1, burst: 1, priority: 2 },
+                { pid: 'MRT-603', name: 'Short Hop B', arrival: 1, burst: 2, priority: 2 },
+                { pid: 'LRT-604', name: 'Short Hop C', arrival: 2, burst: 1, priority: 2 },
+                { pid: 'MRT-605', name: 'Short Hop D', arrival: 3, burst: 2, priority: 2 }
+            ],
+            emergency: [
+                { pid: 'MRT-701', name: 'Track Maintenance', arrival: 0, burst: 5, priority: 5 },
+                { pid: 'LRT-702', name: 'Medical Evacuation', arrival: 0, burst: 2, priority: 1 },
+                { pid: 'MRT-703', name: 'Regular Commuter', arrival: 0, burst: 3, priority: 3 },
+                { pid: 'LRT-704', name: 'VIP Delegation', arrival: 1, burst: 2, priority: 1 },
+                { pid: 'MRT-705', name: 'Night Shuttle', arrival: 1, burst: 4, priority: 4 }
+            ],
+            fairness: [
+                { pid: 'LRT-801', name: 'Long Haul A', arrival: 0, burst: 6, priority: 2 },
+                { pid: 'LRT-802', name: 'Long Haul B', arrival: 0, burst: 6, priority: 2 },
+                { pid: 'LRT-803', name: 'Long Haul C', arrival: 0, burst: 6, priority: 2 },
+                { pid: 'MRT-804', name: 'Late Short Hop', arrival: 2, burst: 2, priority: 2 }
+            ],
+            offpeak: [
+                { pid: 'LRT-A01', name: 'Early Bird', arrival: 0, burst: 2, priority: 3 },
+                { pid: 'MRT-A02', name: 'Mid-Morning Local', arrival: 6, burst: 3, priority: 3 },
+                { pid: 'LRT-A03', name: 'Noon Shuttle', arrival: 12, burst: 2, priority: 3 }
+            ],
+            single: [
+                { pid: 'MRT-B01', name: 'Lone Express', arrival: 0, burst: 5, priority: 1 }
+            ],
+            fullload: [
+                { pid: 'MRT-C01', name: 'Heavy Consist', arrival: 0, burst: 7, priority: 3 },
+                { pid: 'LRT-C02', name: 'Express Hop', arrival: 0, burst: 1, priority: 5 },
+                { pid: 'MRT-C03', name: 'Priority Special', arrival: 0, burst: 4, priority: 1 },
+                { pid: 'LRT-C04', name: 'Quick Local', arrival: 0, burst: 2, priority: 4 },
+                { pid: 'MRT-C05', name: 'Medium Run', arrival: 0, burst: 6, priority: 2 },
+                { pid: 'LRT-C06', name: 'Short Run', arrival: 0, burst: 3, priority: 3 }
+            ],
+            busygridlock: [
+                { pid: 'MRT-D01', name: 'Southbound Interlock A', arrival: 0, burst: 4, priority: 1 },
+                { pid: 'LRT-D02', name: 'Northbound Interlock B', arrival: 0, burst: 4, priority: 1 },
+                { pid: 'MRT-D03', name: 'Queued Commuter C', arrival: 0, burst: 3, priority: 2 },
+                { pid: 'LRT-D04', name: 'Queued Commuter D', arrival: 1, burst: 2, priority: 3 },
+                { pid: 'MRT-D05', name: 'Queued Commuter E', arrival: 2, burst: 5, priority: 4 }
+            ],
+            deadlock: [
+                { pid: 'MRT-901', name: 'Southbound Interlock A', arrival: 0, burst: 4, priority: 1 },
+                { pid: 'LRT-902', name: 'Northbound Interlock B', arrival: 0, burst: 4, priority: 1 },
+                { pid: 'MRT-903', name: 'Queued Commuter C', arrival: 1, burst: 3, priority: 2 }
+            ]
+        };
+
+        /**
+         * Creates a complete Process Control Block (PCB) & 3 Onboard Thread Control Blocks (TCB)
+         */
+        function createPCBObject(raw, indexOrder) {
+            const initialState = raw.arrival <= 0 ? 'READY' : 'NEW';
+            return {
+                pid: raw.pid,
+                name: raw.name,
+                arrival: Number(raw.arrival),
+                burst: Number(raw.burst),
+                remaining: Number(raw.burst),
+                priority: Number(raw.priority),
+                state: initialState,
+                ioWaitRemaining: 0,
+                completionTick: null,
+                waitingTime: 0,
+                turnaroundTime: 0,
+                queueOrder: indexOrder,
+                // Telemetry Registers
+                pcSector: initialState === 'READY' ? 'SEC-APPROACH' : 'SEC-DEPOT',
+                speedKmh: 0,
+                voltage: '750V DC',
+                // Onboard Subsystem Threads (TCB)
+                threads: {
+                    propulsion: 'STANDBY',
+                    doors: 'LOCKED',
+                    comms: 'ONLINE'
+                }
+            };
+        }
+
+        /**
+         * Updates a train's onboard TCB threads & telemetry registers based on its 5-state PCB status
+         */
+        function syncTrainTCBAndRegisters(train) {
+            if (osState.deadlockActive && osState.deadlockPair.includes(train.pid)) {
+                train.pcSector = 'SEC-JUNCTION-LOCK';
+                train.speedKmh = 0;
+                train.threads.propulsion = 'HALTED (BRAKE)';
+                train.threads.doors = 'EMERGENCY LOCK';
+                train.threads.comms = 'ALARM TX';
+                return;
+            }
+
+            switch (train.state) {
+                case 'NEW':
+                    train.pcSector = 'SEC-DEPOT';
+                    train.speedKmh = 0;
+                    train.threads.propulsion = 'IDLE';
+                    train.threads.doors = 'CLOSED';
+                    train.threads.comms = 'INIT';
+                    break;
+                case 'READY':
+                    train.pcSector = 'SEC-APPROACH-Q';
+                    train.speedKmh = 0;
+                    train.threads.propulsion = 'ARMED';
+                    train.threads.doors = 'LOCKED';
+                    train.threads.comms = 'SYNC';
+                    break;
+                case 'RUNNING':
+                    const progressDone = train.burst - train.remaining;
+                    train.pcSector = `JUNCTION-BLK-${progressDone + 1}/${train.burst}`;
+                    train.speedKmh = 65;
+                    train.threads.propulsion = 'ACTIVE (85% KW)';
+                    train.threads.doors = 'INTERLOCKED';
+                    train.threads.comms = 'TELEMETRY TX';
+                    break;
+                case 'WAITING':
+                    train.pcSector = `PLATFORM-IO (${train.ioWaitRemaining}t)`;
+                    train.speedKmh = 0;
+                    train.threads.propulsion = 'SUSPENDED';
+                    train.threads.doors = 'OPEN (BOARDING)';
+                    train.threads.comms = 'PA ANNOUNCING';
+                    break;
+                case 'TERMINATED':
+                    train.pcSector = 'SEC-TERMINAL';
+                    train.speedKmh = 0;
+                    train.threads.propulsion = 'POWER OFF';
+                    train.threads.doors = 'RELEASED';
+                    train.threads.comms = 'ARCHIVED';
+                    break;
+            }
+        }
+
+        /***********************************************************************
+         * SECTION B: CORE CPU SCHEDULING & LIFECYCLE ENGINE (FCFS, SJF, RR, PRIO)
+         ***********************************************************************/
+        function initSimulation(scenarioKey = 'standard') {
+            stopAutoPlay();
+            const rawList = PRESET_SCENARIOS[scenarioKey] || PRESET_SCENARIOS.standard;
+
+            osState = {
+                tick: 0,
+                algorithm: document.getElementById('algo-select').value || 'FCFS',
+                timeQuantum: Math.max(1, parseInt(document.getElementById('quantum-input').value) || 2),
+                currentQuantumUsed: 0,
+                cpuMode: 'KERNEL',
+                lastSyscall: 'sys_boot_init()',
+                whyExplanation: `Loaded ${SCENARIO_INFO[scenarioKey] || scenarioKey} at T=0. Trains with Arrival=0 are placed in the READY approach queue. Press "+1 Tick" or "Auto Dispatch" to begin track scheduling.`,
+                contextSwitches: 0,
+                deadlockActive: false,
+                deadlockPair: [],
+                activeRunningPid: null,
+                pcbList: rawList.map((item, idx) => {
+                    const p = createPCBObject(item, idx);
+                    syncTrainTCBAndRegisters(p);
+                    return p;
+                }),
+                ganttHistory: [],
+                syscallLogs: [
+                    {
+                        tick: 0,
+                        mode: 'KERNEL',
+                        syscall: 'sys_boot_init()',
+                        msg: `Initialized RailKernel with ${rawList.length} train consists using ${document.getElementById('algo-select').value} scheduler.`
+                    }
+                ]
+            };
+
+            historySnapshots = [deepClone(osState)];
+            rebuild3DTrainMeshes();
+
+            if (scenarioKey === 'deadlock') {
+                injectTrackGridlock();
+            } else {
+                refreshAllUI();
+            }
+        }
+
+        /**
+         * Advances the simulation by 1 Clock Tick (Core OS Kernel Heartbeat)
+         */
+        function stepForward() {
+            // Check if a deadlock is currently blocking the junction
+            if (osState.deadlockActive) {
+                osState.tick += 1;
+                osState.cpuMode = 'KERNEL';
+                osState.lastSyscall = 'sys_deadlock_trap()';
+                osState.whyExplanation = `At T=${osState.tick}, Central Interlocking CPU is HALTED due to Circular-Wait Track Gridlock between ${osState.deadlockPair.join(' and ')}. Click "Execute Kernel Preemption" to resolve!`;
+                osState.ganttHistory.push({
+                    tick: osState.tick,
+                    pid: 'GRIDLOCK',
+                    state: 'DEADLOCKED',
+                    mode: 'KERNEL'
+                });
+                addKernelLog('KERNEL', 'sys_deadlock_trap()', `Junction blocked at T=${osState.tick}: Circular wait between ${osState.deadlockPair.join(' ↔ ')}.`);
+                saveSnapshotAndRender();
+                return;
+            }
+
+            const prevRunningPid = osState.activeRunningPid;
+            let modeThisTick = 'USER';
+            let syscallThisTick = 'sys_track_exec()';
+            let notes = [];
+
+            // 1. Advance clock tick
+            osState.tick += 1;
+            const T = osState.tick;
+
+            // 2. Progress any currently RUNNING train from the previous tick
+            if (osState.activeRunningPid) {
+                const runningTrain = osState.pcbList.find(p => p.pid === osState.activeRunningPid);
+                if (runningTrain && runningTrain.state === 'RUNNING') {
+                    runningTrain.remaining -= 1;
+                    osState.currentQuantumUsed += 1;
+
+                    if (runningTrain.remaining <= 0) {
+                        runningTrain.remaining = 0;
+                        runningTrain.state = 'TERMINATED';
+                        runningTrain.completionTick = T;
+                        runningTrain.turnaroundTime = T - runningTrain.arrival;
+                        runningTrain.waitingTime = Math.max(0, runningTrain.turnaroundTime - runningTrain.burst);
+                        osState.activeRunningPid = null;
+                        osState.currentQuantumUsed = 0;
+                        modeThisTick = 'KERNEL';
+                        syscallThisTick = 'sys_exit()';
+                        notes.push(`${runningTrain.pid} completed its track clearance (Terminated at T=${T}).`);
+                        addKernelLog('KERNEL', 'sys_exit()', `${runningTrain.pid} cleared the Central Interlocking Junction (TAT=${runningTrain.turnaroundTime}t, WT=${runningTrain.waitingTime}t).`);
+                    }
+                }
+            }
+
+            // 3. Process WAITING trains at the Passenger Station Platform (I/O Burst)
+            osState.pcbList.forEach(train => {
+                if (train.state === 'WAITING') {
+                    train.ioWaitRemaining -= 1;
+                    if (train.ioWaitRemaining <= 0) {
+                        train.ioWaitRemaining = 0;
+                        train.state = 'READY';
+                        train.queueOrder = T + 0.1; // Joins back of Ready Queue
+                        modeThisTick = 'KERNEL';
+                        syscallThisTick = 'sys_io_complete()';
+                        notes.push(`${train.pid} finished passenger boarding (I/O) and returned to READY queue.`);
+                        addKernelLog('KERNEL', 'sys_io_complete()', `${train.pid} doors locked; returned from Station Platform to READY queue.`);
+                    }
+                }
+            });
+
+            // 4. Admit NEW trains whose Arrival Time <= current tick T
+            osState.pcbList.forEach(train => {
+                if (train.state === 'NEW' && train.arrival <= T) {
+                    train.state = 'READY';
+                    modeThisTick = 'KERNEL';
+                    syscallThisTick = 'sys_sched_admit()';
+                    notes.push(`${train.pid} arrived at approach signal and entered READY state.`);
+                    addKernelLog('KERNEL', 'sys_sched_admit()', `Admitted ${train.pid} (AT=${train.arrival}, Burst=${train.burst}) into READY queue.`);
+                }
+            });
+
+            // 5. Check Round Robin Quantum Expiration on currently RUNNING train
+            if (osState.algorithm === 'RR' && osState.activeRunningPid) {
+                const runningTrain = osState.pcbList.find(p => p.pid === osState.activeRunningPid);
+                if (runningTrain && runningTrain.state === 'RUNNING' && osState.currentQuantumUsed >= osState.timeQuantum) {
+                    const otherReady = osState.pcbList.filter(p => p.state === 'READY');
+                    if (otherReady.length > 0) {
+                        runningTrain.state = 'READY';
+                        runningTrain.queueOrder = T + 0.2; // Move to tail of RR queue
+                        osState.activeRunningPid = null;
+                        osState.currentQuantumUsed = 0;
+                        modeThisTick = 'KERNEL';
+                        syscallThisTick = 'sys_rr_preempt()';
+                        notes.push(`Time Quantum (Q=${osState.timeQuantum}) expired for ${runningTrain.pid}; preempted back to READY queue.`);
+                        addKernelLog('KERNEL', 'sys_rr_preempt()', `Quantum Q=${osState.timeQuantum} expired for ${runningTrain.pid}. Preempting track lock.`);
+                    } else {
+                        // Reset quantum slice if no other train is waiting
+                        osState.currentQuantumUsed = 0;
+                    }
+                }
+            }
+
+            // 6. Select a train from READY queue if CPU (Central Junction) is free
+            let decisionReason = '';
+            if (!osState.activeRunningPid) {
+                const readyTrains = osState.pcbList.filter(p => p.state === 'READY');
+                if (readyTrains.length > 0) {
+                    const selected = selectNextTrain(readyTrains);
+                    selected.state = 'RUNNING';
+                    osState.activeRunningPid = selected.pid;
+                    osState.currentQuantumUsed = 0;
+
+                    if (prevRunningPid && prevRunningPid !== selected.pid) {
+                        osState.contextSwitches += 1;
+                        modeThisTick = 'KERNEL';
+                        syscallThisTick = 'sys_context_switch()';
+                        addKernelLog('KERNEL', 'sys_context_switch()', `Context switched junction lock from ${prevRunningPid} ➔ ${selected.pid}.`);
+                    } else {
+                        modeThisTick = 'KERNEL';
+                        syscallThisTick = 'sys_sched_dispatch()';
+                        addKernelLog('KERNEL', 'sys_sched_dispatch()', `Dispatched ${selected.pid} onto Central Interlocking Junction (${osState.algorithm}).`);
+                    }
+
+                    decisionReason = buildWhyDecisionString(selected, readyTrains, notes);
+                } else {
+                    const allDone = osState.pcbList.every(p => p.state === 'TERMINATED');
+                    decisionReason = allDone
+                        ? `All train consists have cleared the Central Interlocking Junction and reached TERMINATED state!`
+                        : `At T=${T}, Central Junction CPU is IDLE because no trains are in the READY queue (${notes.join(' ') || 'awaiting I/O completion or future arrivals'}).`;
+                }
+            } else {
+                const activeTrain = osState.pcbList.find(p => p.pid === osState.activeRunningPid);
+                decisionReason = `At T=${T}, ${activeTrain.pid} (${activeTrain.name}) continues executing on the Central Interlocking Junction (${activeTrain.remaining}/${activeTrain.burst} ticks left). ${notes.join(' ')}`;
+            }
+
+            // 7. Increment waiting time for all trains currently sitting in READY state
+            osState.pcbList.forEach(train => {
+                if (train.state === 'READY') {
+                    train.waitingTime += 1;
+                }
+                syncTrainTCBAndRegisters(train);
+            });
+
+            // 8. Record Gantt block & update kernel status
+            osState.cpuMode = modeThisTick;
+            osState.lastSyscall = syscallThisTick;
+            osState.whyExplanation = decisionReason;
+            osState.ganttHistory.push({
+                tick: T,
+                pid: osState.activeRunningPid || 'IDLE',
+                state: osState.activeRunningPid ? 'RUNNING' : 'IDLE',
+                mode: modeThisTick
+            });
+
+            saveSnapshotAndRender();
+        }
+
+        /**
+         * Selects the next train from the READY queue according to the active CPU Scheduling Algorithm
+         */
+        function selectNextTrain(readyList) {
+            const sorted = [...readyList];
+            switch (osState.algorithm) {
+                case 'FCFS':
+                    sorted.sort((a, b) => (a.arrival - b.arrival) || (a.queueOrder - b.queueOrder));
+                    break;
+                case 'SJF':
+                    sorted.sort((a, b) => (a.remaining - b.remaining) || (a.arrival - b.arrival));
+                    break;
+                case 'PRIORITY':
+                    sorted.sort((a, b) => (a.priority - b.priority) || (a.arrival - b.arrival));
+                    break;
+                case 'RR':
+                    sorted.sort((a, b) => a.queueOrder - b.queueOrder);
+                    break;
+            }
+            return sorted[0];
+        }
+
+        /**
+         * Generates a clear, educational explanation for the "WHY?" Decision Explainer Banner
+         */
+        function buildWhyDecisionString(selected, readyTrains, notes) {
+            const notePrefix = notes.length > 0 ? notes.join(' ') + ' ' : '';
+            const rivals = readyTrains.filter(t => t.pid !== selected.pid);
+
+            if (rivals.length === 0) {
+                return `${notePrefix}Scheduler (${osState.algorithm}) dispatched ${selected.pid} because it is the only train ready at the approach signal.`;
+            }
+
+            const rivalNames = rivals.map(r => {
+                if (osState.algorithm === 'SJF') return `${r.pid} (Rem:${r.remaining}t)`;
+                if (osState.algorithm === 'PRIORITY') return `${r.pid} (Prio:${r.priority})`;
+                return `${r.pid} (AT:${r.arrival})`;
+            }).join(', ');
+
+            switch (osState.algorithm) {
+                case 'FCFS':
+                    return `${notePrefix}Scheduler (FCFS) selected ${selected.pid} (Arrival T=${selected.arrival}) ahead of [${rivalNames}] because it arrived earliest at the approach queue.`;
+                case 'SJF':
+                    return `${notePrefix}Scheduler (SJF) selected ${selected.pid} (Burst Rem=${selected.remaining}t) over [${rivalNames}] because it requires the shortest track clearance time.`;
+                case 'PRIORITY':
+                    return `${notePrefix}Scheduler (Priority) selected ${selected.pid} (Priority=${selected.priority}) over [${rivalNames}] because lower priority numbers represent express/emergency clearance.`;
+                case 'RR':
+                    return `${notePrefix}Scheduler (Round Robin, Q=${osState.timeQuantum}t) rotated track clearance to ${selected.pid} at the head of the circular FIFO queue ahead of [${rivalNames}].`;
+                default:
+                    return `${notePrefix}Dispatched ${selected.pid}.`;
+            }
+        }
+
+        /***********************************************************************
+         * SECTION C: INTERRUPTS, STATION I/O WAIT & DEADLOCK RESOLVER
+         ***********************************************************************/
+        function triggerStationBoardingIO(targetPid = null) {
+            if (osState.deadlockActive) return;
+
+            const pidToBlock = targetPid || osState.activeRunningPid;
+            const train = osState.pcbList.find(p => p.pid === pidToBlock);
+
+            if (!train || (train.state !== 'RUNNING' && train.state !== 'READY')) {
+                osState.cpuMode = 'KERNEL';
+                osState.lastSyscall = 'sys_io_wait(EINVAL)';
+                osState.whyExplanation = `Cannot trigger Station Boarding (I/O Wait): No active RUNNING train on the junction right now. Advance +1 Tick first!`;
+                refreshAllUI();
+                return;
+            }
+
+            const wasRunning = train.state === 'RUNNING';
+            train.state = 'WAITING';
+            train.ioWaitRemaining = 2; // 2 ticks of station passenger boarding
+            if (wasRunning) {
+                osState.activeRunningPid = null;
+                osState.currentQuantumUsed = 0;
+            }
+
+            syncTrainTCBAndRegisters(train);
+            osState.cpuMode = 'KERNEL';
+            osState.lastSyscall = `sys_io_wait(${train.pid})`;
+            osState.whyExplanation = `I/O INTERRUPT: ${train.pid} pulled into the Passenger Station Platform (WAITING state for 2 ticks: Doors Thread=OPEN, Propulsion=SUSPENDED), freeing the Central Junction CPU for other ready trains!`;
+            addKernelLog('KERNEL', 'sys_io_wait()', `${train.pid} diverted to Station Platform for passenger boarding (2 ticks I/O wait).`);
+
+            historySnapshots[historySnapshots.length - 1] = deepClone(osState);
+            refreshAllUI();
+        }
+
+        function handleDeadlockButton() {
+            if (osState.deadlockActive) {
+                resolveTrackGridlock();
+            } else {
+                injectTrackGridlock();
+            }
+        }
+
+        function injectTrackGridlock() {
+            const candidates = osState.pcbList.filter(p => p.state !== 'TERMINATED');
+            if (candidates.length < 2) {
+                osState.whyExplanation = `Need at least 2 non-terminated trains to demonstrate a Circular-Wait Track Gridlock. Reset or dispatch a new train first!`;
+                refreshAllUI();
+                return;
+            }
+
+            const t1 = candidates[0];
+            const t2 = candidates[1];
+            t1.state = 'RUNNING';
+            t2.state = 'RUNNING';
+            osState.deadlockActive = true;
+            osState.deadlockPair = [t1.pid, t2.pid];
+            osState.activeRunningPid = null;
+            osState.cpuMode = 'KERNEL';
+            osState.lastSyscall = 'sys_deadlock_alert()';
+            osState.whyExplanation = `TRACK GRIDLOCK (DEADLOCK) INJECTED: ${t1.pid} holds North Switch waiting for South Switch, while ${t2.pid} holds South Switch waiting for North Switch! All 4 Coffman conditions are satisfied.`;
+
+            osState.pcbList.forEach(p => syncTrainTCBAndRegisters(p));
+            addKernelLog('KERNEL', 'sys_deadlock_alert()', `CRITICAL: Circular wait detected between ${t1.pid} and ${t2.pid} at Central Junction!`);
+
+            historySnapshots[historySnapshots.length - 1] = deepClone(osState);
+            refreshAllUI();
+        }
+
+        function resolveTrackGridlock() {
+            if (!osState.deadlockActive) return;
+
+            const [pidA, pidB] = osState.deadlockPair;
+            const trainA = osState.pcbList.find(p => p.pid === pidA);
+            const trainB = osState.pcbList.find(p => p.pid === pidB);
+
+            osState.deadlockActive = false;
+            osState.deadlockPair = [];
+
+            if (trainA && trainB) {
+                // Preempt Train B into Station Siding (READY/WAITING rollback) and let Train A hold the junction
+                trainA.state = 'RUNNING';
+                osState.activeRunningPid = trainA.pid;
+                trainB.state = 'READY';
+                trainB.queueOrder = osState.tick + 0.5;
+            }
+
+            osState.contextSwitches += 1;
+            osState.cpuMode = 'KERNEL';
+            osState.lastSyscall = 'sys_deadlock_recover()';
+            osState.whyExplanation = `DEADLOCK RESOLVED: Kernel broke the Circular Wait & No-Preemption conditions by rolling ${pidB} back to the approach siding (READY) and granting exclusive Central Junction lock to ${pidA}!`;
+
+            osState.pcbList.forEach(p => syncTrainTCBAndRegisters(p));
+            addKernelLog('KERNEL', 'sys_deadlock_recover()', `Preempted ${pidB} to siding; restored junction clearance to ${pidA}.`);
+
+            historySnapshots[historySnapshots.length - 1] = deepClone(osState);
+            refreshAllUI();
+        }
+
+        /***********************************************************************
+         * SECTION D: TIME MACHINE SCRUBBER & PLAYBACK CONTROLS
+         ***********************************************************************/
+        function deepClone(obj) {
+            return JSON.parse(JSON.stringify(obj));
+        }
+
+        function saveSnapshotAndRender() {
+            // Truncate any future branch if user rewound and stepped forward
+            if (historySnapshots.length > osState.tick) {
+                historySnapshots = historySnapshots.slice(0, osState.tick);
+            }
+            historySnapshots.push(deepClone(osState));
+            refreshAllUI();
+        }
+
+        function stepBackward() {
+            stopAutoPlay();
+            if (osState.tick <= 0 || historySnapshots.length <= 1) return;
+            const targetTick = osState.tick - 1;
+            scrubToTick(targetTick);
+        }
+
+        function scrubToTick(tickIndex) {
+            const idx = Math.max(0, Math.min(historySnapshots.length - 1, parseInt(tickIndex)));
+            osState = deepClone(historySnapshots[idx]);
+            rebuild3DTrainMeshes();
+            refreshAllUI();
+        }
+
+        function togglePlayPause() {
+            if (playInterval) {
+                stopAutoPlay();
+            } else {
+                document.getElementById('play-icon').textContent = '⏸';
+                document.getElementById('play-text').textContent = 'Pause Dispatch';
+                playInterval = setInterval(() => {
+                    const allDone = osState.pcbList.length > 0 && osState.pcbList.every(p => p.state === 'TERMINATED');
+                    if (allDone) {
+                        stopAutoPlay();
+                        return;
+                    }
+                    stepForward();
+                }, 1250);
+            }
+        }
+
+        function stopAutoPlay() {
+            if (playInterval) {
+                clearInterval(playInterval);
+                playInterval = null;
+            }
+            const playIcon = document.getElementById('play-icon');
+            const playText = document.getElementById('play-text');
+            if (playIcon) playIcon.textContent = '▶';
+            if (playText) playText.textContent = 'Auto Dispatch';
+        }
+
+        function resetSimulation() {
+            const currentScenario = document.getElementById('scenario-select').value;
+            initSimulation(currentScenario);
+        }
+
+        function loadPresetScenario(key) {
+            initSimulation(key);
+        }
+
+        function onAlgorithmChange() {
+            const newAlgo = document.getElementById('algo-select').value;
+            osState.algorithm = newAlgo;
+            osState.currentQuantumUsed = 0;
+            osState.cpuMode = 'KERNEL';
+            osState.lastSyscall = `sys_sched_set(${newAlgo})`;
+            osState.whyExplanation = `Switched CPU Scheduling Algorithm to ${newAlgo}. The next dispatch decision will evaluate the READY queue using ${newAlgo} rules.`;
+            addKernelLog('KERNEL', 'sys_sched_set()', `Scheduler policy updated to ${newAlgo}.`);
+            refreshAllUI();
+        }
+
+        function onQuantumChange() {
+            const q = Math.max(1, Math.min(10, parseInt(document.getElementById('quantum-input').value) || 2));
+            document.getElementById('quantum-input').value = q;
+            osState.timeQuantum = q;
+            addKernelLog('KERNEL', 'sys_quantum_set()', `Round Robin time quantum updated to Q=${q} ticks.`);
+            refreshAllUI();
+        }
+
+        function addKernelLog(mode, syscall, msg) {
+            osState.syscallLogs.unshift({
+                tick: osState.tick,
+                mode,
+                syscall,
+                msg
+            });
+        }
+
+        /***********************************************************************
+         * SECTION E: VALIDATED PCB CREATION MODAL (Specific Objective 1)
+         ***********************************************************************/
+        function openTrainModal() {
+            stopAutoPlay();
+            const nextNum = 101 + osState.pcbList.length;
+            document.getElementById('input-pid').value = `LRT-${nextNum}`;
+            document.getElementById('input-name').value = `Cubao Consist #${osState.pcbList.length + 1}`;
+            document.getElementById('input-arrival').value = osState.tick;
+            document.getElementById('input-burst').value = 3;
+            document.getElementById('input-priority').value = 2;
+            document.getElementById('modal-error-box').classList.add('hidden');
+            document.getElementById('train-modal').classList.remove('hidden');
+        }
+
+        function closeTrainModal() {
+            document.getElementById('train-modal').classList.add('hidden');
+        }
+
+        function toggleGuideModal(show) {
+            const modal = document.getElementById('guide-modal');
+            if (show) modal.classList.remove('hidden');
+            else modal.classList.add('hidden');
+        }
+
+        function handleCreateTrain(e) {
+            e.preventDefault();
+            const errorBox = document.getElementById('modal-error-box');
+            const pid = document.getElementById('input-pid').value.trim().toUpperCase();
+            const name = document.getElementById('input-name').value.trim();
+            const arrival = parseInt(document.getElementById('input-arrival').value);
+            const burst = parseInt(document.getElementById('input-burst').value);
+            const priority = parseInt(document.getElementById('input-priority').value);
+
+            // Strict Input Validation (Specific Objective 1)
+            if (!pid || !name) {
+                errorBox.textContent = 'Validation Error: Train PID and Consist Name cannot be empty.';
+                errorBox.classList.remove('hidden');
+                return;
+            }
+            if (osState.pcbList.some(p => p.pid.toUpperCase() === pid)) {
+                errorBox.textContent = `Validation Error: Duplicate Process ID "${pid}" already exists in the PCB table.`;
+                errorBox.classList.remove('hidden');
+                return;
+            }
+            if (isNaN(arrival) || arrival < 0) {
+                errorBox.textContent = 'Validation Error: Arrival Tick must be 0 or greater.';
+                errorBox.classList.remove('hidden');
+                return;
+            }
+            if (isNaN(burst) || burst < 1 || burst > 15) {
+                errorBox.textContent = 'Validation Error: Burst Time must be between 1 and 15 clock ticks.';
+                errorBox.classList.remove('hidden');
+                return;
+            }
+            if (isNaN(priority) || priority < 1 || priority > 10) {
+                errorBox.textContent = 'Validation Error: Priority Level must be between 1 (Highest) and 10 (Lowest).';
+                errorBox.classList.remove('hidden');
+                return;
+            }
+
+            const newTrain = createPCBObject(
+                { pid, name, arrival, burst, priority },
+                osState.pcbList.length + osState.tick
+            );
+            newTrain.state = arrival <= osState.tick ? 'READY' : 'NEW';
+            syncTrainTCBAndRegisters(newTrain);
+
+            osState.pcbList.push(newTrain);
+            osState.cpuMode = 'KERNEL';
+            osState.lastSyscall = `sys_fork(${pid})`;
+            osState.whyExplanation = `Created new Train Process ${pid} (${name}) via sys_fork() with Burst=${burst}t, Priority=${priority}, State=${newTrain.state}.`;
+            addKernelLog('KERNEL', 'sys_fork()', `Allocated PCB & 3 TCB threads for ${pid} (AT=${arrival}, BT=${burst}, Prio=${priority}).`);
+
+            historySnapshots[historySnapshots.length - 1] = deepClone(osState);
+            rebuild3DTrainMeshes();
+            closeTrainModal();
+            refreshAllUI();
+        }
+
+        /***********************************************************************
+         * SECTION F: DOM UI RENDERING (2-STORY VIEW, PCB TABLE, GANTT, METRICS)
+         ***********************************************************************/
+        function setViewMode(mode) {
+            currentViewMode = mode;
+            const upper3D = document.getElementById('upper-story-3d');
+            const lowerOS = document.getElementById('lower-story-os');
+            const btnSplit = document.getElementById('view-btn-split');
+            const btn3D = document.getElementById('view-btn-3d');
+            const btnOS = document.getElementById('view-btn-os');
+
+            const activeClass = 'px-2.5 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 bg-sky-500 text-slate-950 shadow';
+            const inactiveClass = 'px-2.5 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 text-slate-300 hover:text-white';
+
+            btnSplit.className = mode === 'split' ? activeClass : inactiveClass;
+            btn3D.className = mode === '3d' ? activeClass : inactiveClass;
+            btnOS.className = mode === 'os' ? activeClass : inactiveClass;
+
+            if (mode === 'split') {
+                upper3D.classList.remove('hidden');
+                upper3D.style.height = 'clamp(480px,74vh,660px)';
+                lowerOS.classList.remove('hidden');
+            } else if (mode === '3d') {
+                upper3D.classList.remove('hidden');
+                upper3D.style.height = 'max(520px,86vh)';
+                lowerOS.classList.add('hidden');
+            } else if (mode === 'os') {
+                upper3D.classList.add('hidden');
+                lowerOS.classList.remove('hidden');
+            }
+
+            document.getElementById('three-canvas').style.touchAction = mode === '3d' ? 'none' : 'pan-y';
+            [30, 150, 400].forEach(ms => setTimeout(onWindowResize, ms));
+        }
+
+        function setPCBStateFilter(filter) {
+            currentPCBFilter = filter;
+            document.querySelectorAll('.pcb-filter-btn').forEach(btn => {
+                if (btn.dataset.filter === filter) {
+                    btn.className = 'pcb-filter-btn px-2.5 py-1 rounded-md text-[11px] font-mono font-semibold bg-sky-500 text-slate-950';
+                } else {
+                    btn.className = 'pcb-filter-btn px-2.5 py-1 rounded-md text-[11px] font-mono bg-slate-800 text-slate-300 hover:bg-slate-700';
+                }
+            });
+            renderPCBTable();
+        }
+
+        function refreshAllUI() {
+            // 1. Clock & Scrubber
+            document.getElementById('clock-tick-display').textContent = `T=${osState.tick}`;
+            const scrubber = document.getElementById('time-scrubber');
+            scrubber.max = Math.max(0, historySnapshots.length - 1);
+            scrubber.value = osState.tick;
+            document.getElementById('scrubber-label').textContent = `T=${osState.tick} / ${Math.max(0, historySnapshots.length - 1)}`;
+            document.getElementById('btn-step-back').disabled = osState.tick <= 0;
+
+            // 2. USER / KERNEL Mode Indicator Badge
+            const modeBadge = document.getElementById('cpu-mode-badge');
+            const modeDot = document.getElementById('cpu-mode-dot');
+            const modeText = document.getElementById('cpu-mode-text');
+
+            if (osState.deadlockActive) {
+                modeBadge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono font-bold bg-rose-950/90 border-rose-500 text-rose-200 animate-kernel-pulse';
+                modeDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_10px_#f43f5e]';
+                modeText.textContent = 'KERNEL TRAP: TRACK GRIDLOCK';
+            } else if (osState.cpuMode === 'KERNEL') {
+                modeBadge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono font-bold bg-amber-950/90 border-amber-500/60 text-amber-300 animate-kernel-pulse';
+                modeDot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_#fbbf24]';
+                modeText.textContent = 'KERNEL MODE: SYSCALL / DISPATCH';
+            } else {
+                modeBadge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono font-bold bg-emerald-950/80 border-emerald-500/50 text-emerald-300';
+                modeDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]';
+                modeText.textContent = 'USER MODE: TRACK EXECUTION';
+            }
+
+            // 3. Why Explainer Banner
+            document.getElementById('why-explainer-text').textContent = osState.whyExplanation;
+            document.getElementById('why-syscall-pill').textContent = `SYSCALL: ${osState.lastSyscall}`;
+
+            // 4. 3D Telemetry Overlay & Deadlock Controls
+            const activeHud = document.getElementById('hud-active-train');
+            const signalHud = document.getElementById('hud-signal-aspect');
+            const dlBanner = document.getElementById('hud-deadlock-banner');
+            const dlBtn = document.getElementById('btn-deadlock-action');
+            const dlBtnText = document.getElementById('deadlock-btn-text');
+
+            if (osState.deadlockActive) {
+                activeHud.textContent = `GRIDLOCK: ${osState.deadlockPair.join(' ↔ ')}`;
+                activeHud.className = 'font-mono font-bold text-sm text-rose-400';
+                signalHud.textContent = 'ALL SIGNALS FLASHING RED (HAZARD)';
+                signalHud.className = 'font-mono font-semibold text-xs text-rose-400';
+                dlBanner.classList.remove('hidden');
+                dlBtn.className = 'px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 shadow transition';
+                dlBtnText.textContent = 'Resolve Track Gridlock';
+            } else {
+                dlBanner.classList.add('hidden');
+                dlBtn.className = 'px-3 py-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow transition';
+                dlBtnText.textContent = 'Inject Track Gridlock';
+
+                if (osState.activeRunningPid) {
+                    activeHud.textContent = `${osState.activeRunningPid} (LOCKED ON JUNCTION)`;
+                    activeHud.className = 'font-mono font-bold text-sm text-emerald-400';
+                    signalHud.textContent = 'GREEN CLEARANCE (PROCEED)';
+                    signalHud.className = 'font-mono font-semibold text-xs text-emerald-300';
+                } else {
+                    activeHud.textContent = 'IDLE (JUNCTION UNLOCKED)';
+                    activeHud.className = 'font-mono font-bold text-sm text-slate-400';
+                    signalHud.textContent = 'AMBER STANDBY';
+                    signalHud.className = 'font-mono font-semibold text-xs text-amber-300';
+                }
+            }
+
+            // 5. Render Lower Story Tables & Panels
+            renderPCBTable();
+            renderGanttChart();
+            renderMetricsAndDeadlockCard();
+            renderKernelLogs();
+            update3DTrainTargets();
+        }
+
+        function renderPCBTable() {
+            const tbody = document.getElementById('pcb-table-body');
+            const query = (document.getElementById('pcb-search-input').value || '').trim().toLowerCase();
+
+            const filtered = osState.pcbList.filter(p => {
+                const matchState = currentPCBFilter === 'ALL' || p.state === currentPCBFilter;
+                const matchQuery = !query || p.pid.toLowerCase().includes(query) || p.name.toLowerCase().includes(query) || p.pcSector.toLowerCase().includes(query);
+                return matchState && matchQuery;
+            });
+
+            document.getElementById('pcb-count-label').textContent = `Showing ${filtered.length} of ${osState.pcbList.length} trains`;
+
+            tbody.innerHTML = filtered.map(p => {
+                const isDeadlocked = osState.deadlockActive && osState.deadlockPair.includes(p.pid);
+                const visualState = isDeadlocked ? 'DEADLOCKED' : p.state;
+                const colorInfo = STATE_COLORS[visualState] || STATE_COLORS.NEW;
+                const donePct = Math.round(((p.burst - p.remaining) / p.burst) * 100);
+
+                return `
+                    <tr data-pid="${p.pid}" tabindex="0" onkeydown="if(event.key==='Enter')focusTrain('${p.pid}')" onclick="focusTrain('${p.pid}')" class="cursor-pointer hover:bg-slate-800/50 transition ${p.state === 'RUNNING' ? 'bg-emerald-950/20' : ''}">
+                        <td class="py-2 px-2.5 font-mono">
+                            <div class="font-bold text-white flex items-center gap-1.5">
+                                <span class="w-2 h-2 rounded-full" style="background:${colorInfo.css}"></span>
+                                <span>${p.pid}</span>
+                            </div>
+                            <div class="text-[11px] text-slate-400 font-sans truncate max-w-[140px]">${p.name}</div>
+                        </td>
+                        <td class="py-2 px-2">
+                            <span class="px-2 py-0.5 rounded border text-[10px] font-mono font-bold ${colorInfo.badge}">
+                                ${visualState}
+                            </span>
+                        </td>
+                        <td class="py-2 px-2 text-center font-mono font-bold text-sky-300">P${p.priority}</td>
+                        <td class="py-2 px-2 text-center font-mono text-slate-300">T=${p.arrival}</td>
+                        <td class="py-2 px-2.5 font-mono">
+                            <div class="flex items-center justify-between text-[11px] mb-1">
+                                <span class="text-white font-bold">${p.remaining}t left</span>
+                                <span class="text-slate-400">/ ${p.burst}t</span>
+                            </div>
+                            <div class="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                <div class="h-full transition-all duration-300" style="width:${donePct}%; background:${colorInfo.css}"></div>
+                            </div>
+                        </td>
+                        <td class="py-2 px-2 font-mono text-[10px] text-slate-300">
+                            <div>PC: <span class="text-sky-300">${p.pcSector}</span></div>
+                            <div>SPD: <span class="text-emerald-300">${p.speedKmh} km/h</span> • ${p.voltage}</div>
+                        </td>
+                        <td class="py-2 px-2.5 font-mono text-[10px]">
+                            <div class="flex flex-wrap gap-1">
+                                <span class="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-emerald-300">Prop: ${p.threads.propulsion}</span>
+                                <span class="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-purple-300">Doors: ${p.threads.doors}</span>
+                            </div>
+                        </td>
+                        <td class="py-2 px-2 text-right">
+                            ${(p.state === 'RUNNING' || p.state === 'READY') ? `
+                                <button onclick="triggerStationBoardingIO('${p.pid}')" class="px-2 py-1 rounded bg-purple-900/70 hover:bg-purple-700 text-purple-200 border border-purple-500/40 font-mono text-[10px] transition" title="Trigger Station Boarding I/O Wait">
+                                    🚏 I/O Wait
+                                </button>
+                            ` : `<span class="text-[10px] font-mono text-slate-500">—</span>`}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function renderGanttChart() {
+            const container = document.getElementById('gantt-chart-container');
+            if (osState.ganttHistory.length === 0) {
+                container.innerHTML = `<div class="text-xs font-mono text-slate-500 px-2">No clock ticks executed yet (T=0). Press "+1 Tick" or "Auto Dispatch" to build the live Gantt chart.</div>`;
+                return;
+            }
+
+            container.innerHTML = osState.ganttHistory.map(item => {
+                let bgClass = 'bg-slate-800 border-slate-600 text-slate-300';
+                if (item.pid === 'GRIDLOCK') {
+                    bgClass = 'bg-rose-950 border-rose-500 text-rose-300';
+                } else if (item.pid !== 'IDLE') {
+                    bgClass = 'bg-emerald-950/90 border-emerald-500/60 text-emerald-300';
+                }
+
+                return `
+                    <button onclick="scrubToTick(${item.tick})" class="flex-shrink-0 px-2.5 py-1.5 rounded-lg border ${bgClass} font-mono text-center hover:scale-105 transition cursor-pointer" title="Click to rewind Time Machine to T=${item.tick}">
+                        <div class="text-[10px] opacity-75">T=${item.tick - 1}→${item.tick}</div>
+                        <div class="text-xs font-bold">${item.pid}</div>
+                    </button>
+                `;
+            }).join('');
+            container.scrollLeft = container.scrollWidth;
+        }
+
+        function renderMetricsAndDeadlockCard() {
+            // CPU Utilization
+            const totalTicks = osState.ganttHistory.length;
+            const busyTicks = osState.ganttHistory.filter(g => g.pid !== 'IDLE' && g.pid !== 'GRIDLOCK').length;
+            const utilPct = totalTicks > 0 ? Math.round((busyTicks / totalTicks) * 100) : 0;
+
+            // Average Turnaround & Waiting Time
+            const completed = osState.pcbList.filter(p => p.state === 'TERMINATED');
+            const avgTat = completed.length > 0
+                ? (completed.reduce((acc, p) => acc + p.turnaroundTime, 0) / completed.length).toFixed(1)
+                : '0.0';
+            const avgWt = osState.pcbList.length > 0
+                ? (osState.pcbList.reduce((acc, p) => acc + p.waitingTime, 0) / osState.pcbList.length).toFixed(1)
+                : '0.0';
+
+            document.getElementById('metric-cpu-util').textContent = `${utilPct}%`;
+            document.getElementById('metric-avg-tat').textContent = `${avgTat}t`;
+            document.getElementById('metric-avg-wt').textContent = `${avgWt}t`;
+            document.getElementById('metric-ctx-switches').textContent = osState.contextSwitches;
+
+            // Deadlock Card Status
+            const dlCard = document.getElementById('deadlock-resolver-card');
+            const dlDot = document.getElementById('deadlock-status-dot');
+            const dlBadge = document.getElementById('deadlock-badge');
+            const c2 = document.getElementById('coffman-2-val');
+            const c3 = document.getElementById('coffman-3-val');
+            const c4 = document.getElementById('coffman-4-val');
+            const graphText = document.getElementById('deadlock-graph-text');
+            const resolveBtn = document.getElementById('btn-resolve-card');
+
+            if (osState.deadlockActive) {
+                dlCard.className = 'glass-panel rounded-2xl p-3.5 border-2 border-rose-500 deadlock-border flex flex-col gap-2.5';
+                dlDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping';
+                dlBadge.className = 'px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-950 text-rose-300 border border-rose-500';
+                dlBadge.textContent = 'DEADLOCK DETECTED';
+                c2.textContent = 'VIOLATED (HOLDING)';
+                c2.className = 'font-bold text-rose-400 mt-0.5';
+                c3.textContent = 'LOCKED (NO PREEMPT)';
+                c3.className = 'font-bold text-rose-400 mt-0.5';
+                c4.textContent = 'ACTIVE CYCLE!';
+                c4.className = 'font-bold text-rose-400 mt-0.5';
+                graphText.innerHTML = `Cycle: <span class="text-rose-400 font-bold">${osState.deadlockPair[0]} ➔ Track-B ➔ ${osState.deadlockPair[1]} ➔ Track-A</span>`;
+                resolveBtn.disabled = false;
+            } else {
+                dlCard.className = 'glass-panel rounded-2xl p-3.5 border border-slate-800 flex flex-col gap-2.5';
+                dlDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+                dlBadge.className = 'px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40';
+                dlBadge.textContent = 'NO CIRCULAR WAIT';
+                c2.textContent = 'SAFE';
+                c2.className = 'font-bold text-emerald-400 mt-0.5';
+                c3.textContent = 'KERNEL OVERRIDE READY';
+                c3.className = 'font-bold text-amber-300 mt-0.5';
+                c4.textContent = 'NONE';
+                c4.className = 'font-bold text-emerald-400 mt-0.5';
+                graphText.innerHTML = `Interlocking Graph: <span class="text-emerald-400">All switch points clear or sequentially queued.</span>`;
+                resolveBtn.disabled = true;
+            }
+        }
+
+        function renderKernelLogs() {
+            const list = document.getElementById('kernel-log-list');
+            const filter = (document.getElementById('log-search-input').value || '').trim().toLowerCase();
+
+            const logs = osState.syscallLogs.filter(l => {
+                return !filter || l.syscall.toLowerCase().includes(filter) || l.msg.toLowerCase().includes(filter);
+            });
+
+            list.innerHTML = logs.map(l => `
+                <div class="p-1.5 rounded bg-slate-900/80 border border-slate-800/90 flex items-start gap-2">
+                    <span class="px-1.5 py-0.5 rounded bg-slate-800 text-sky-400 font-bold">T=${l.tick}</span>
+                    <span class="px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-500/30">${l.syscall}</span>
+                    <span class="text-slate-300 flex-1">${l.msg}</span>
+                </div>
+            `).join('');
+        }
+
+        /***********************************************************************
+         * SECTION G: THREE.JS 3D LRT/MRT CENTRAL SIGNALING & INTERLOCKING WORLD
+         ***********************************************************************/
+        let scene, camera, renderer;
+        let junctionCoreMesh, junctionRingMesh, signalLampMesh;
+        let trainMeshesMap = {}; // pid -> { group, stripMat, targetPos, labelEl }
+
+        // Orbit Camera Spherical Coordinates
+        let camRadius = 38;
+        let camTheta = 0.65;
+        let camPhi = 0.92;
+        let camTarget = new THREE.Vector3(0, 0, 0);
+        const goal = { r: 38, t: 0.65, p: 0.92, x: 0, z: 0 };
+        const clock = new THREE.Clock(); let selectedPid = null, raycaster = new THREE.Raycaster(), hoverPid = null;
+        let runLight, isDragging = false;
+        let prevMouse = { x: 0, y: 0 };
+
+        function initThreeWorld() {
+            const container = document.getElementById('three-container');
+            const canvas = document.getElementById('three-canvas');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x060a12, 0.007);
+
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 300);
+            updateCameraTransform();
+
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight, false);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x94a3b8, 0.75);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0x38bdf8, 1.1);
+            dirLight.position.set(20, 35, 25);
+            scene.add(dirLight);
+
+            const pointLight = new THREE.PointLight(0x10b981, 1.4, 30);
+            pointLight.position.set(0, 5, 0);
+            scene.add(pointLight);
+
+            // 1. Base Urban Rail Grid & Ground
+            const groundGeo = new THREE.PlaneGeometry(190, 90);
+            const groundMat = new THREE.MeshStandardMaterial({ color: 0x070b14, roughness: 0.9 });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
+            ground.position.y = -0.1;
+            scene.add(ground);
+
+            const gridHelper = new THREE.GridHelper(120, 60, 0x1e293b, 0x0f172a);
+            scene.add(gridHelper);
+
+            // 2. Build 3 Parallel Track Corridors:
+            //    z = 0  : Main Interlocking Line (Approach -> Central CPU Junction -> Terminal)
+            //    z = -6.5: Opposing Interlocking Track (Used for Circular-Wait Deadlock & Express)
+            //    z = 7.0 : Passenger Station Platform Siding (Used for I/O Waiting State)
+            buildTrackCorridor(0, 130, 0x38bdf8);
+            buildTrackCorridor(-6.5, 130, 0x475569);
+            buildTrackCorridor(7.0, 70, 0xa855f7);
+
+            // 3. Central Interlocking Junction Zone (The CPU Core at X = 0, Z = 0)
+            const cpuBoxGeo = new THREE.BoxGeometry(13, 0.25, 11);
+            const cpuBoxMat = new THREE.MeshBasicMaterial({
+                color: 0x10b981,
+                transparent: true,
+                opacity: 0.18
+            });
+            junctionCoreMesh = new THREE.Mesh(cpuBoxGeo, cpuBoxMat);
+            junctionCoreMesh.position.set(0, 0.08, -2.5);
+            scene.add(junctionCoreMesh);
+
+            const ringGeo = new THREE.RingGeometry(4.5, 5.1, 32);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0x10b981, side: THREE.DoubleSide });
+            junctionRingMesh = new THREE.Mesh(ringGeo, ringMat);
+            junctionRingMesh.rotation.x = -Math.PI / 2;
+            junctionRingMesh.position.set(0, 0.12, 0);
+            scene.add(junctionRingMesh);
+
+            // 4. 3D Central Signaling Tower beside the Junction
+            buildSignalTower(5.5, -3.5);
+
+            // 5. 3D Passenger Station Platform Canopy (I/O Wait Zone at Z = 10.2)
+            buildStationPlatform(0, 10.2);
+
+            // 6. Overhead Catenary Portals
+            [-28, -14, 0, 14, 28].forEach(xPos => buildCatenaryPortal(xPos));
+
+            buildScenery();
+            // Smooth pointer controls: drag = orbit, wheel/pinch = zoom, click train = focus
+            canvas.style.touchAction = 'pan-y';
+            const pts = new Map(); let moved = 0, pinch = 0;
+            canvas.addEventListener('pointerdown', e => {
+                canvas.setPointerCapture(e.pointerId); pts.set(e.pointerId, e); moved = 0;
+                prevMouse = { x: e.clientX, y: e.clientY };
+            });
+            canvas.addEventListener('pointermove', e => {
+                if (!pts.has(e.pointerId)) { hoverTrain(e); return; }
+                pts.set(e.pointerId, e);
+                if (pts.size === 2) {
+                    const [a, b] = [...pts.values()]; const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+                    if (pinch) goal.r = Math.max(14, Math.min(70, goal.r * pinch / d)); pinch = d; return;
+                }
+                const dx = e.clientX - prevMouse.x, dy = e.clientY - prevMouse.y;
+                prevMouse = { x: e.clientX, y: e.clientY }; moved += Math.abs(dx) + Math.abs(dy);
+                goal.t -= dx * 0.006; goal.p = Math.max(0.25, Math.min(1.45, goal.p - dy * 0.006));
+            });
+            const up = e => { if (pts.size === 1 && moved < 5) pickTrain(e); pts.delete(e.pointerId); pinch = 0; };
+            canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', e => { pts.delete(e.pointerId); pinch = 0; });
+            canvas.addEventListener('wheel', e => { if (currentViewMode !== '3d' && !e.ctrlKey && !e.metaKey) return; /* let the page scroll in split view */ e.preventDefault(); goal.r = Math.max(14, Math.min(70, goal.r + e.deltaY * 0.03)); }, { passive: false });
+            canvas.addEventListener('dblclick', () => setCameraPreset('iso'));
+            window.addEventListener('keydown', e => {
+                if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+                const k = e.key;
+                if (k === ' ') { e.preventDefault(); togglePlayPause(); }
+                else if (k === 'ArrowRight') stepForward(); else if (k === 'ArrowLeft') stepBackward();
+                else if (k === 'r' || k === 'R') resetSimulation();
+                else if ('1234'.includes(k) && k) setCameraPreset(['iso', 'junction', 'station', 'top'][+k - 1]);
+            });
+            new ResizeObserver(onWindowResize).observe(container);
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function buildTrackCorridor(zOffset, length, railGlowHex) {
+            // Ballast bed
+            const bedGeo = new THREE.BoxGeometry(length, 0.15, 2.6);
+            const bedMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
+            const bed = new THREE.Mesh(bedGeo, bedMat);
+            bed.position.set(0, 0.05, zOffset);
+            scene.add(bed);
+
+            // Two steel rails
+            const railGeo = new THREE.BoxGeometry(length, 0.12, 0.12);
+            const railMat = new THREE.MeshBasicMaterial({ color: railGlowHex });
+            const rail1 = new THREE.Mesh(railGeo, railMat);
+            const rail2 = new THREE.Mesh(railGeo, railMat);
+            rail1.position.set(0, 0.18, zOffset - 0.65);
+            rail2.position.set(0, 0.18, zOffset + 0.65);
+            scene.add(rail1, rail2);
+        }
+
+        function buildSignalTower(x, z) {
+            const postGeo = new THREE.CylinderGeometry(0.18, 0.22, 4.8, 12);
+            const postMat = new THREE.MeshStandardMaterial({ color: 0x475569 });
+            const post = new THREE.Mesh(postGeo, postMat);
+            post.position.set(x, 2.4, z);
+            scene.add(post);
+
+            const headGeo = new THREE.BoxGeometry(0.9, 1.8, 0.9);
+            const headMat = new THREE.MeshStandardMaterial({ color: 0x0f172a });
+            const head = new THREE.Mesh(headGeo, headMat);
+            head.position.set(x, 4.8, z);
+            scene.add(head);
+
+            const lampGeo = new THREE.SphereGeometry(0.38, 16, 16);
+            const lampMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+            signalLampMesh = new THREE.Mesh(lampGeo, lampMat);
+            signalLampMesh.position.set(x, 4.9, z + 0.4);
+            scene.add(signalLampMesh);
+        }
+
+        function buildStationPlatform(x, z) {
+            const platGeo = new THREE.BoxGeometry(24, 0.6, 3.2);
+            const platMat = new THREE.MeshStandardMaterial({ color: 0x1e1b4b });
+            const plat = new THREE.Mesh(platGeo, platMat);
+            plat.position.set(x, 0.3, z);
+            scene.add(plat);
+
+            // Glowing purple platform edge strip
+            const edgeGeo = new THREE.BoxGeometry(24, 0.12, 0.2);
+            const edgeMat = new THREE.MeshBasicMaterial({ color: 0xa855f7 });
+            const edge = new THREE.Mesh(edgeGeo, edgeMat);
+            edge.position.set(x, 0.62, z - 1.5);
+            scene.add(edge);
+
+            // Station canopy roof
+            const roofGeo = new THREE.BoxGeometry(22, 0.2, 3.4);
+            const roofMat = new THREE.MeshStandardMaterial({ color: 0x312e81, transparent: true, opacity: 0.75 });
+            const roof = new THREE.Mesh(roofGeo, roofMat);
+            roof.position.set(x, 3.3, z);
+            scene.add(roof);
+        }
+
+        function buildCatenaryPortal(xPos) {
+            const mat = new THREE.MeshStandardMaterial({ color: 0x334155 });
+            const leftPillar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 5.5, 0.3), mat);
+            leftPillar.position.set(xPos, 2.75, -10);
+            const rightPillar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 5.5, 0.3), mat);
+            rightPillar.position.set(xPos, 2.75, 11.5);
+            const beam = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 22), mat);
+            beam.position.set(xPos, 5.4, 0.75);
+            scene.add(leftPillar, rightPillar, beam);
+        }
+
+        /**
+         * Rebuilds 3D Articulated LRT/MRT Train Meshes & Floating HTML HUD Tags
+         */
+        function rebuild3DTrainMeshes() {
+            if (!scene) return;
+            const hudLayer = document.getElementById('train-hud-layer');
+            const same = Object.keys(trainMeshesMap).join() === osState.pcbList.map(t => t.pid).join();
+            if (same) { update3DTrainTargets(); return; }   // keep meshes -> trains glide instead of teleporting
+
+            hudLayer.innerHTML = '';
+            Object.values(trainMeshesMap).forEach(en => {
+                scene.remove(en.group);
+                en.group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+            });
+            trainMeshesMap = {};
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.35, metalness: 0.5 });
+            const winMat = new THREE.MeshBasicMaterial({ color: 0xe0f2fe }), darkMat = new THREE.MeshStandardMaterial({ color: 0x0b1220 });
+
+            osState.pcbList.forEach((train, index) => {
+                const group = new THREE.Group(); group.userData.pid = train.pid;
+                const stripMat = new THREE.MeshBasicMaterial({ color: STATE_COLORS[train.state].hex });
+                const { wheels, glow } = buildTrainModel(group, stripMat);
+
+                const labelEl = document.createElement('div');
+                labelEl.className = 'train-hud-label px-2 py-1 rounded-lg glass-panel border border-slate-700 text-[10px] font-mono shadow-lg whitespace-nowrap cursor-pointer';
+                labelEl.onclick = () => focusTrain(train.pid);
+                hudLayer.appendChild(labelEl);
+
+                const t = computeTrainTargetPosition(train, index);
+                group.position.copy(t); scene.add(group);
+                trainMeshesMap[train.pid] = { pid: train.pid, group, stripMat, glow, wheels, lastState: undefined, targetPos: t, targetYaw: 0, labelEl };
+            });
+            update3DTrainTargets();
+        }
+
+        /**
+         * Maps a train's OS 5-State lifecycle status to its exact 3D railway track coordinates
+         */
+        function computeTrainTargetPosition(train, idx) {
+            // If in Deadlock, place the 2 deadlocked trains nose-to-nose in the Central Junction!
+            if (osState.deadlockActive && osState.deadlockPair.includes(train.pid)) {
+                const isFirst = osState.deadlockPair[0] === train.pid;
+                return new THREE.Vector3(isFirst ? -4.2 : 4.2, 0, 0);
+            }
+
+            switch (train.state) {
+                case 'NEW': {
+                    // Parked in outer depot
+                    const nIdx = Math.max(0, osState.pcbList.filter(p => p.state === 'NEW').findIndex(p => p.pid === train.pid));
+                    return new THREE.Vector3(-14 - nIdx * 8.4, 0, -6.5);
+                }
+                case 'READY': {
+                    // Queued along the approach track before the Central Junction Signal (x = -11, -19, -27...)
+                    const readyList = osState.pcbList.filter(p => p.state === 'READY');
+                    const qIdx = Math.max(0, readyList.findIndex(p => p.pid === train.pid));
+                    return new THREE.Vector3(-11.5 - qIdx * 8.4, 0, 0);
+                }
+                case 'RUNNING': {
+                    // Actively traversing across the Central Interlocking Junction (CPU at X = -3 to +4)
+                    const progress = (train.burst - train.remaining) / Math.max(1, train.burst);
+                    const xPos = -2.5 + progress * 6.5;
+                    return new THREE.Vector3(xPos, 0, 0);
+                }
+                case 'WAITING': {
+                    // Pulled into the Passenger Station Platform Siding (Z = 7.0)
+                    const waitList = osState.pcbList.filter(p => p.state === 'WAITING');
+                    const wIdx = Math.max(0, waitList.findIndex(p => p.pid === train.pid));
+                    return new THREE.Vector3(-4 + wIdx * 8.4, 0, 7.0);
+                }
+                case 'TERMINATED': {
+                    // Cleared the junction and parked on the departure terminal track (X = +16, +24...)
+                    const termList = osState.pcbList.filter(p => p.state === 'TERMINATED');
+                    const tIdx = Math.max(0, termList.findIndex(p => p.pid === train.pid));
+                    return new THREE.Vector3(15 + tIdx * 8.4, 0, 0);
+                }
+                default:
+                    return new THREE.Vector3(-25, 0, 0);
+            }
+        }
+
+        function update3DTrainTargets() {
+            if (!scene) return;
+
+            // Update Central Junction & Signal Tower Colors
+            if (junctionCoreMesh && junctionRingMesh && signalLampMesh) {
+                let hex = 0xf59e0b; // Standby Amber
+                if (osState.deadlockActive) hex = 0xef4444; // Deadlock Red
+                else if (osState.activeRunningPid) hex = 0x10b981; // Running Green
+
+                junctionCoreMesh.material.color.setHex(hex);
+                junctionRingMesh.material.color.setHex(hex);
+                signalLampMesh.material.color.setHex(hex);
+            }
+
+            SFX.rumble(!!osState.activeRunningPid && !osState.deadlockActive);
+            osState.pcbList.forEach((train, idx) => {
+                const entry = trainMeshesMap[train.pid];
+                if (!entry) return;
+
+                const isDeadlocked = osState.deadlockActive && osState.deadlockPair.includes(train.pid);
+                const visualState = isDeadlocked ? 'DEADLOCKED' : train.state;
+                const colorObj = STATE_COLORS[visualState] || STATE_COLORS.NEW;
+
+                entry.stripMat.color.setHex(colorObj.hex);
+                const prevS = entry.lastState;
+                if (prevS !== undefined && prevS !== visualState) {
+                    if (visualState === 'RUNNING') SFX.horn(); else if (visualState === 'WAITING') SFX.chime();
+                    else if (visualState === 'TERMINATED') SFX.arrive(); else if (visualState === 'DEADLOCKED') SFX.alarm();
+                    else if (prevS === 'DEADLOCKED') SFX.resolve(); else if (prevS === 'RUNNING') SFX.brake();
+                }
+                entry.lastState = visualState;
+                entry.targetPos = computeTrainTargetPosition(train, idx);
+                entry.targetYaw = (osState.deadlockActive && osState.deadlockPair[1] === train.pid) ? Math.PI : 0;
+                entry.labelEl.style.borderColor = train.pid === selectedPid ? '#38bdf8' : '';
+
+                // Update Floating 3D HUD Tag HTML
+                entry.labelEl.innerHTML = `
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full" style="background:${colorObj.css}"></span>
+                        <span class="font-bold text-white">${train.pid}</span>
+                        <span class="px-1 rounded text-[9px] ${colorObj.badge}">${visualState}</span>
+                    </div>
+                    <div class="text-[9px] text-slate-300 mt-0.5">
+                        Rem: <span class="text-sky-300 font-bold">${train.remaining}/${train.burst}t</span> • Prio:${train.priority}
+                    </div>
+                `;
+            });
+        }
+
+
+        /* ================= SOUND ENGINE (Web Audio, no files needed) ================= */
+        const SFX = (() => {
+            let ctx = null, on = true, ready = false, rum = null;
+            const A = () => { if (!ready) return null; if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } } if (ctx.state === 'suspended') ctx.resume(); return ctx; };
+            const tone = (f, d, type = 'sine', v = 0.12, t0 = 0, f2) => {
+                const a = A(); if (!a || !on) return; const t = a.currentTime + t0, o = a.createOscillator(), g = a.createGain();
+                o.type = type; o.frequency.setValueAtTime(f, t); if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + d);
+                g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+                o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + d + 0.05);
+            };
+            const noiseBuf = () => { const a = A(), b = a.createBuffer(1, a.sampleRate * 2, a.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return b; };
+            const hiss = (d, v, f, t0 = 0) => {
+                const a = A(); if (!a || !on) return; const t = a.currentTime + t0, s = a.createBufferSource(), fl = a.createBiquadFilter(), g = a.createGain();
+                s.buffer = noiseBuf(); fl.type = 'lowpass'; fl.frequency.value = f; g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+                s.connect(fl); fl.connect(g); g.connect(a.destination); s.start(t); s.stop(t + d);
+            };
+            return {
+                unlock() { ready = true; },
+                toggle() { on = !on; if (!on) this.rumble(false); return on; },
+                click() { tone(900, 0.05, 'square', 0.04); },
+                tick() { tone(300, 0.06, 'triangle', 0.07); },
+                horn() { tone(311, 0.9, 'sawtooth', 0.07); tone(392, 0.9, 'sawtooth', 0.07); },
+                chime() { tone(880, 0.5, 'sine', 0.13); tone(660, 0.7, 'sine', 0.13, 0.35); },
+                arrive() { [523, 659, 784].forEach((f, i) => tone(f, 0.45, 'sine', 0.12, i * 0.14)); },
+                brake() { hiss(0.9, 0.18, 2200); },
+                alarm() { for (let i = 0; i < 6; i++) tone(i % 2 ? 620 : 940, 0.2, 'square', 0.08, i * 0.22); },
+                resolve() { tone(440, 0.25, 'sine', 0.12); tone(660, 0.25, 'sine', 0.12, 0.2); tone(880, 0.5, 'sine', 0.12, 0.4); },
+                rumble(run) {
+                    const a = A(); if (!a) return;
+                    if (run && on && !rum) {
+                        const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+                        s.buffer = noiseBuf(); s.loop = true; f.type = 'lowpass'; f.frequency.value = 160; g.gain.value = 0.0001;
+                        g.gain.linearRampToValueAtTime(0.09, a.currentTime + 0.6); s.connect(f); f.connect(g); g.connect(a.destination); s.start(); rum = { s, g };
+                    } else if ((!run || !on) && rum) {
+                        const r = rum; rum = null; r.g.gain.linearRampToValueAtTime(0.0001, a.currentTime + 0.4); r.s.stop(a.currentTime + 0.45);
+                    }
+                }
+            };
+        })();
+        ['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, () => SFX.unlock(), { once: true }));
+        document.addEventListener('click', e => { if (e.target.closest('button,select')) SFX.click(); });
+        const _stepFwd = stepForward; stepForward = function () { SFX.tick(); _stepFwd(); };
+        function toggleSound() {
+            const on = SFX.toggle(); const b = document.getElementById('btn-sound');
+            b.textContent = on ? '🔊 Sound: On' : '🔇 Sound: Off';
+        }
+
+        /* ================= GUIDED TOUR (for presentations) ================= */
+        const TOUR = [
+            ['iso', 'Welcome to RailKernel. The railway is the computer: every train is a process, and the glowing junction is the CPU.'],
+            ['junction', 'The junction is the CPU core. Only one train can hold it at a time (RUNNING). Green = busy, amber = idle, red = deadlock.'],
+            ['station', 'The station platform is I/O wait. A boarding train is WAITING, which frees the CPU for the next train.'],
+            ['top', 'Top view: trains queue on the left (READY) and finish on the right (TERMINATED).'],
+            ['iso', 'Scroll down for the lower story: process table, Gantt chart, deadlock detector and kernel logs.']
+        ];
+        let tourIdx = -1, tourTimer = null;
+        function tourGo(i) {
+            tourIdx = (i + TOUR.length) % TOUR.length; setCameraPreset(TOUR[tourIdx][0]);
+            document.getElementById('tour-text').textContent = TOUR[tourIdx][1];
+            document.getElementById('tour-step').textContent = (tourIdx + 1) + '/' + TOUR.length;
+            document.getElementById('tour-caption').classList.remove('hidden');
+            document.getElementById('btn-tour').textContent = '■ Stop tour';
+            clearInterval(tourTimer); tourTimer = setInterval(() => tourGo(tourIdx + 1), 8000);
+        }
+        function tourStop() {
+            clearInterval(tourTimer); tourIdx = -1;
+            document.getElementById('tour-caption').classList.add('hidden');
+            document.getElementById('btn-tour').textContent = '🎬 Guided tour';
+        }
+        function toggleTour() { tourIdx < 0 ? tourGo(0) : tourStop(); }
+
+        /* ================= DETAILED SCENERY ================= */
+        function makeLabel(text, w, h, x, y, z, color, flat) {
+            const cv = document.createElement('canvas'); cv.width = 512; cv.height = Math.round(512 * h / w);
+            const c = cv.getContext('2d'); c.fillStyle = 'rgba(8,13,26,0.55)'; c.fillRect(0, 0, cv.width, cv.height);
+            c.strokeStyle = color; c.lineWidth = 6; c.strokeRect(3, 3, cv.width - 6, cv.height - 6);
+            c.fillStyle = color; c.font = 'bold ' + Math.round(cv.height * 0.42) + 'px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+            c.fillText(text, cv.width / 2, cv.height / 2 + 2);
+            const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+            m.position.set(x, y, z); if (flat) m.rotation.x = -Math.PI / 2; scene.add(m); return m;
+        }
+
+        function buildScenery() {
+            const std = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: 0.8 }, o));
+            const add = (g, m, x, y, z, shadow = true) => { const me = new THREE.Mesh(g, m); me.position.set(x, y, z); me.castShadow = shadow; me.receiveShadow = true; scene.add(me); return me; };
+            scene.traverse(o => {
+                if (o.isDirectionalLight) {
+                    o.color.setHex(0xe0f2fe); o.castShadow = true; o.shadow.mapSize.set(2048, 2048); o.shadow.bias = -0.0005;
+                    Object.assign(o.shadow.camera, { left: -55, right: 55, top: 32, bottom: -32, near: 1, far: 130 }); o.shadow.camera.updateProjectionMatrix();
+                }
+            });
+            runLight = new THREE.PointLight(0x10b981, 1.6, 18); scene.add(runLight);
+
+            // Railway sleepers (instanced = fast)
+            const sg = new THREE.BoxGeometry(0.35, 0.1, 2.4), sm = std(0x2b2f3a), m4 = new THREE.Matrix4();
+            [[0, 130], [-6.5, 130], [7, 70]].forEach(([z, len]) => {
+                const n = Math.floor(len / 1.1), im = new THREE.InstancedMesh(sg, sm, n);
+                for (let i = 0; i < n; i++) { m4.setPosition(-len / 2 + i * 1.1, 0.16, z); im.setMatrixAt(i, m4); }
+                im.receiveShadow = true; scene.add(im);
+                add(new THREE.BoxGeometry(len, 0.04, 0.04), std(0x94a3b8, { metalness: 0.6 }), 0, 4.9, z, false); // overhead wire
+            });
+
+            // City skyline with lit windows
+            let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+            const cv = document.createElement('canvas'); cv.width = 32; cv.height = 64; const cx = cv.getContext('2d');
+            cx.fillStyle = '#0b1324'; cx.fillRect(0, 0, 32, 64);
+            for (let y = 4; y < 64; y += 8) for (let x = 4; x < 32; x += 8) { cx.fillStyle = rnd() < 0.45 ? '#fde68a' : '#1e293b'; cx.fillRect(x, y, 4, 5); }
+            for (let side = 0; side < 2; side++) for (let x = -62; x <= 62; x += 9) {
+                const w = 5 + rnd() * 3, h = 8 + rnd() * 20, tex = new THREE.CanvasTexture(cv);
+                tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(Math.ceil(w / 2), Math.ceil(h / 4));
+                const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, 5), new THREE.MeshBasicMaterial({ map: tex, color: 0x9aa7bd }));
+                b.position.set(x + rnd() * 3, h / 2, side ? 36 : -34); scene.add(b);
+            }
+
+            // Street lamps
+            for (let x = -56; x <= 56; x += 14) {
+                add(new THREE.CylinderGeometry(0.07, 0.09, 4.2, 8), std(0x475569), x, 2.1, -12);
+                add(new THREE.SphereGeometry(0.22, 12, 12), new THREE.MeshBasicMaterial({ color: 0xfde68a }), x, 4.3, -12, false);
+            }
+
+            // Station extras: pillars, benches, yellow safety edge, passengers
+            for (let x = -10; x <= 10; x += 4) add(new THREE.BoxGeometry(0.25, 3, 0.25), std(0x64748b, { metalness: 0.5 }), x, 1.8, 11.5);
+            for (let x = -8; x <= 8; x += 8) add(new THREE.BoxGeometry(2, 0.3, 0.6), std(0x92400e), x, 0.9, 11);
+            add(new THREE.BoxGeometry(24, 0.03, 0.35), new THREE.MeshBasicMaterial({ color: 0xfacc15 }), 0, 0.62, 8.9, false);
+            const pc = [0xf87171, 0x60a5fa, 0xfbbf24, 0x34d399, 0xc084fc];
+            for (let i = 0; i < 16; i++) {
+                const px = -10 + rnd() * 20, pz = 9.6 + rnd() * 1.4, col = std(pc[i % 5]);
+                add(new THREE.CylinderGeometry(0.2, 0.24, 0.8, 8), col, px, 1.0, pz);
+                add(new THREE.SphereGeometry(0.17, 10, 10), std(0xfde7c8), px, 1.55, pz);
+            }
+
+            // Plain-language labels that map the railway to the OS
+            makeLabel('CENTRAL INTERLOCKING = CPU', 11, 1.3, 0, 0.27, -3.3, '#34d399', true);
+            makeLabel('APPROACH QUEUE = READY', 10, 1.1, -24, 0.27, 3.3, '#fbbf24', true);
+            makeLabel('TERMINAL = TERMINATED', 10, 1.1, 24, 0.27, 3.3, '#22d3ee', true);
+            makeLabel('DEPOT = NEW', 8, 1.1, -26, 0.27, -9.6, '#94a3b8', true);
+            makeLabel('STATION PLATFORM = I/O WAIT', 9, 1.1, 0, 4.2, 10.2, '#c084fc', false);
+        }
+
+        function buildTrainModel(group, strip) {
+            const M = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: 0.4, metalness: 0.45 }, o));
+            const body = M(0xe2e8f0), roof = M(0x64748b), dark = M(0x0b1220, { metalness: 0.2 }), door = M(0x475569), wm = M(0x94a3b8, { metalness: 0.8 });
+            const glass = new THREE.MeshStandardMaterial({ color: 0x7dd3fc, emissive: 0x38bdf8, emissiveIntensity: 0.55, roughness: 0.1, metalness: 0.6 });
+            const add = (g, m, x, y, z) => { const me = new THREE.Mesh(g, m); me.position.set(x, y, z); me.castShadow = true; group.add(me); return me; };
+            const wheels = [], wg = new THREE.CylinderGeometry(0.28, 0.28, 0.14, 14).rotateX(Math.PI / 2);
+            [-1.5, 1.5].forEach(o => {
+                add(new THREE.BoxGeometry(2.8, 1.05, 1.6), body, o, 0.95, 0);
+                add(new THREE.BoxGeometry(2.7, 0.12, 1.3), roof, o, 1.54, 0);
+                add(new THREE.BoxGeometry(2.82, 0.16, 1.62), strip, o, 0.62, 0);   // side livery stripe = process state
+                add(new THREE.BoxGeometry(2.2, 0.1, 1.0), strip, o, 1.63, 0);      // roof status bar
+                add(new THREE.BoxGeometry(0.7, 0.16, 0.5), dark, o - 0.7, 1.68, 0.2);
+                add(new THREE.BoxGeometry(0.7, 0.16, 0.5), dark, o + 0.7, 1.68, -0.2);
+                [-1, 1].forEach(sd => {
+                    [-1.0, -0.5, 0.5, 1.0].forEach(w => add(new THREE.BoxGeometry(0.42, 0.36, 0.04), glass, o + w, 1.12, sd * 0.81));
+                    add(new THREE.BoxGeometry(0.5, 0.78, 0.04), door, o, 0.88, sd * 0.81);
+                });
+                [-0.95, 0.95].forEach(bx => {
+                    add(new THREE.BoxGeometry(1.0, 0.22, 1.2), dark, o + bx, 0.32, 0);
+                    [-0.3, 0.3].forEach(ax => [-0.62, 0.62].forEach(wz => { const w = new THREE.Mesh(wg, wm); w.position.set(o + bx + ax, 0.28, wz); group.add(w); wheels.push(w); }));
+                });
+            });
+            add(new THREE.BoxGeometry(0.3, 0.95, 1.35), dark, 0, 0.95, 0);        // flexible connector between cars
+            [1, -1].forEach(d => {                                                // rounded driver cabs on both ends
+                const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 1.05, 20, 1, false, 0, Math.PI), body);
+                nose.scale.x = 1.1; nose.position.set(d * 2.9, 0.95, 0); nose.rotation.y = d > 0 ? 0 : Math.PI; nose.castShadow = true; group.add(nose);
+                const win = new THREE.Mesh(new THREE.CylinderGeometry(0.81, 0.81, 0.36, 20, 1, false, 0.35, Math.PI - 0.7), M(0x0f2a44, { metalness: 0.7, roughness: 0.15 }));
+                win.scale.x = 1.1; win.position.set(d * 2.9, 1.13, 0); win.rotation.y = d > 0 ? 0 : Math.PI; group.add(win);
+                [-0.45, 0.45].forEach(z => add(new THREE.SphereGeometry(0.1, 10, 10), new THREE.MeshBasicMaterial({ color: d > 0 ? 0xfef9c3 : 0xef4444 }), d * 3.7, 0.7, z));
+            });
+            const glow = new THREE.Mesh(new THREE.BoxGeometry(8, 0.05, 2.4), new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.45 }));
+            glow.position.y = 0.14; glow.visible = false; group.add(glow);
+            return { wheels, glow };
+        }
+
+        function zoomBy(d) { goal.r = Math.max(14, Math.min(70, goal.r + d)); }
+        function toggleHelp() { document.getElementById('help-panel').classList.toggle('hidden'); }
+        function toggleA11yPanel() {
+            const p = document.getElementById('a11y-panel'), open = p.classList.toggle('hidden') === false;
+            document.getElementById('a11y-btn').setAttribute('aria-expanded', open);
+        }
+        function applyA11y() {
+            const o = { large: opt('opt-large'), hc: opt('opt-hc'), motion: opt('opt-motion') };
+            document.body.classList.toggle('large-text', o.large); document.body.classList.toggle('hc', o.hc); document.body.classList.toggle('reduce-motion', o.motion);
+            try { localStorage.setItem('rk-a11y', JSON.stringify(o)); } catch (e) { }
+            setTimeout(onWindowResize, 50);
+        }
+        function opt(id) { return document.getElementById(id).checked; }
+        (function loadA11y() {
+            let o = {}; try { o = JSON.parse(localStorage.getItem('rk-a11y') || '{}'); } catch (e) { }
+            if (o.motion === undefined && window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) o.motion = true;
+            window.addEventListener('DOMContentLoaded', () => {
+                document.getElementById('opt-large').checked = !!o.large; document.getElementById('opt-hc').checked = !!o.hc; document.getElementById('opt-motion').checked = !!o.motion; applyA11y();
+            });
+        })();
+        window.addEventListener('keydown', e => {
+            if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+            const k = e.key;
+            if (k === '+' || k === '=') zoomBy(-6); else if (k === '-' || k === '_') zoomBy(6);
+            else if (k === 'q' || k === 'Q') goal.t += 0.25; else if (k === 'e' || k === 'E') goal.t -= 0.25;
+            else if (k === '?' || k === 'h' || k === 'H') toggleHelp();
+            else if (k === 'Escape') { closeTrainModal(); toggleGuideModal(false); if (tourIdx >= 0) tourStop(); }
+        });
+
+        function updateCameraTransform() {
+            if (!camera) return;
+            const R = camRadius * Math.max(1, 1.75 / camera.aspect);   // zoom out on narrow viewports so the whole scene stays visible
+            camera.position.set(camTarget.x + R * Math.sin(camPhi) * Math.sin(camTheta),
+                camTarget.y + R * Math.cos(camPhi), camTarget.z + R * Math.sin(camPhi) * Math.cos(camTheta));
+            camera.lookAt(camTarget);
+        }
+
+        function setCameraPreset(p) {
+            const P = { iso: [38, 0.65, 0.92, 0, 0], junction: [18, 0.25, 0.85, 0, 0], station: [22, 0.45, 0.88, 0, 6], top: [46, 0.01, 0.18, 0, 0] }[p];
+            [goal.r, goal.t, goal.p, goal.x, goal.z] = P; selectedPid = null;
+        }
+
+        function rayTrain(e) {
+            const rc = renderer.domElement.getBoundingClientRect();
+            raycaster.setFromCamera(new THREE.Vector2(((e.clientX - rc.left) / rc.width) * 2 - 1, -((e.clientY - rc.top) / rc.height) * 2 + 1), camera);
+            const hit = raycaster.intersectObjects(Object.values(trainMeshesMap).map(t => t.group), true)[0];
+            if (!hit) return null;
+            let o = hit.object; while (o.parent && !o.userData.pid) o = o.parent; return o.userData.pid || null;
+        }
+        function hoverTrain(e) { hoverPid = rayTrain(e); renderer.domElement.style.cursor = hoverPid ? 'pointer' : 'grab'; }
+        function pickTrain(e) { const pid = rayTrain(e); if (pid) focusTrain(pid); }
+        function focusTrain(pid) {
+            selectedPid = pid; goal.r = 20; goal.p = 0.95;
+            const row = document.querySelector(`[data-pid="${pid}"]`); if (row) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+
+        function onWindowResize() {
+            const container = document.getElementById('three-container');
+            if (!container || !renderer || !camera) return;
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            if (w === 0 || h === 0) return;
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+            renderer.setSize(w, h, false);
+        }
+
+        /**
+         * Main 60FPS Animation Loop for Smooth 3D Train Movement & Projected HUD Labels
+         */
+        function animateLoop() {
+            requestAnimationFrame(animateLoop);
+            const rm = document.body.classList.contains('reduce-motion');
+            const dt = Math.min(clock.getDelta(), 0.05), k = rm ? 1 : 1 - Math.exp(-dt * 5), kp = 1 - Math.exp(-dt * 3.2), now = performance.now();
+            if (!(renderer && scene && camera) || currentViewMode === 'os') return;
+            const container = document.getElementById('three-container');
+            const width = container.clientWidth, height = container.clientHeight;
+
+            const sel = selectedPid && trainMeshesMap[selectedPid];
+            if (sel) { goal.x = sel.group.position.x; goal.z = sel.group.position.z; }
+            camRadius += (goal.r - camRadius) * k; camPhi += (goal.p - camPhi) * k;
+            camTheta += (goal.t - camTheta) * k; camTarget.x += (goal.x - camTarget.x) * k; camTarget.z += (goal.z - camTarget.z) * k;
+            updateCameraTransform();
+
+            if (junctionRingMesh) { const sc = 1 + 0.05 * Math.sin(now * 0.004); junctionRingMesh.scale.set(sc, sc, 1); }
+            if (signalLampMesh) signalLampMesh.scale.setScalar(osState.deadlockActive ? 1 + 0.25 * Math.sin(now * 0.016) : 1);
+
+            Object.values(trainMeshesMap).forEach(en => {
+                const g = en.group, dx = en.targetPos.x - g.position.x, dz = en.targetPos.z - g.position.z;
+                g.position.x += dx * kp; g.position.z += dz * kp;
+                const speed = Math.min(1, Math.hypot(dx, dz) / 4);
+                g.rotation.y += (en.targetYaw - g.rotation.y) * kp;
+                g.rotation.z = rm ? 0 : Math.sin(now * 0.012) * 0.004 * speed;   // gentle sway only while moving
+                g.position.y = rm ? 0 : Math.abs(Math.sin(now * 0.02)) * 0.015 * speed;
+                const hot = en.pid === selectedPid || en.pid === hoverPid;
+                en.glow.visible = hot; const mv = Math.hypot(dx, dz) * kp; en.wheels.forEach(w => { w.rotation.z -= mv / 0.28; });
+                const wp = g.position.clone(); wp.y += 2.4; wp.project(camera);
+                if (wp.z < 1) {
+                    en.labelEl.style.left = ((wp.x * 0.5 + 0.5) * width) + 'px';
+                    en.labelEl.style.top = ((-wp.y * 0.5 + 0.5) * height) + 'px';
+                    en.labelEl.style.opacity = '1'; en.labelEl.style.zIndex = hot ? 30 : 15;
+                } else en.labelEl.style.opacity = '0';
+            });
+            const rp = osState.activeRunningPid && trainMeshesMap[osState.activeRunningPid];
+            if (runLight) { runLight.visible = !!rp; if (rp) { runLight.position.set(rp.group.position.x, 3, rp.group.position.z); runLight.color.setHex(osState.deadlockActive ? 0xef4444 : 0x10b981); } }
+            renderer.render(scene, camera);
+        }
+
+        // Start everything cleanly on window load
+        window.onload = function () {
+            initThreeWorld();
+            initSimulation('standard');
+            animateLoop();
+        };
+    </script>
+</body>
+</html>
