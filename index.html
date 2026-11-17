@@ -150,6 +150,17 @@
         .hc .glass-panel, .hc .glass-card { background: rgba(2, 6, 23, 0.96); }
         .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
         @media (prefers-reduced-motion: reduce) { .animate-ping, .animate-kernel-pulse { animation: none !important; } }
+    
+        .lec-table { border-collapse: collapse; width: 100%; }
+        .lec-table th, .lec-table td { border: 1px solid #475569; text-align: center; padding: 6px 8px; }
+        .lec-table thead th { background: #334155; color: #fff; font-weight: 800; letter-spacing: .04em; }
+        .lec-table tbody tr:nth-child(odd) td { background: rgba(51,65,85,.55); }
+        .lec-table tbody tr:nth-child(even) td { background: rgba(30,41,59,.55); }
+        .lec-table tbody tr:hover td { background: rgba(56,189,248,.16); }
+        .lec-table .grp { border-left: 3px solid #38bdf8; }
+        .lec-table th.det { background: #1e293b; color: #94a3b8; font-weight: 700; }
+        details.step > summary { cursor: pointer; list-style: none; }
+        details.step > summary::-webkit-details-marker { display: none; }
     </style>
 </head>
 <body class="min-h-screen flex flex-col selection:bg-sky-500 selection:text-slate-950">
@@ -266,6 +277,7 @@
                         <option value="single" class="bg-slate-900">Case 10: Single Train Baseline</option>
                         <option value="fullload" class="bg-slate-900">Case 11: Maximum Load (6 trains at T=0)</option>
                         <option value="busygridlock" class="bg-slate-900">Case 12: Gridlock With Busy Queue</option>
+                        <option value="autodeadlock" class="bg-slate-900">Case 13: AUTOMATIC Deadlock (auto-detected + auto-recovered)</option>
                     </select>
                 </div>
             </div>
@@ -462,24 +474,28 @@
 
                 <!-- PCB & TCB Table -->
                 <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse">
+                    <table class="lec-table text-xs" aria-label="Process table: arrival, burst, completion, turnaround and waiting time">
                         <thead>
-                            <tr class="border-b border-slate-800 text-[10px] font-mono uppercase text-slate-400 bg-slate-900/60">
-                                <th class="py-2 px-2.5">PID &amp; Consist</th>
-                                <th class="py-2 px-2">5-State PCB</th>
-                                <th class="py-2 px-2 text-center">Prio</th>
-                                <th class="py-2 px-2 text-center">AT</th>
-                                <th class="py-2 px-2.5">Burst (Rem/Tot)</th>
-                                <th class="py-2 px-2">Telemetry Registers</th>
-                                <th class="py-2 px-2.5">Onboard TCB Threads</th>
-                                <th class="py-2 px-2 text-right">Action</th>
+                            <tr class="text-[11px] font-mono uppercase">
+                                <th scope="col" title="Process (train)">P</th>
+                                <th scope="col" title="Arrival Time">AT</th>
+                                <th scope="col" title="Burst Time">BT</th>
+                                <th scope="col" title="Completion Time">CT</th>
+                                <th scope="col" title="Turnaround Time = CT - AT">TAT</th>
+                                <th scope="col" title="Waiting Time = TAT - BT">WT</th>
+                                <th scope="col" class="det grp">State (PCB)</th>
+                                <th scope="col" class="det">Prio</th>
+                                <th scope="col" class="det">Remaining</th>
+                                <th scope="col" class="det">Onboard threads (TCB)</th>
+                                <th scope="col" class="det">I/O</th>
                             </tr>
                         </thead>
-                        <tbody id="pcb-table-body" class="divide-y divide-slate-800/70 text-xs">
-                            <!-- Populated by JS -->
-                        </tbody>
+                        <tbody id="pcb-table-body" class="text-xs"></tbody>
                     </table>
+                    <p class="text-[11px] text-slate-400 mt-1.5 font-mono">TAT = CT − AT &nbsp;•&nbsp; WT = TAT − BT &nbsp;•&nbsp; blank (—) cells are filled in when the train finishes, just like the lecture table.</p>
                 </div>
+
+                <div id="formula-box" class="rounded-xl border border-slate-700 bg-slate-950/70 p-3 grid sm:grid-cols-3 gap-3 text-xs font-mono" aria-live="polite"></div>
 
                 <!-- Live Gantt Chart Timeline Section -->
                 <div class="mt-auto pt-2 border-t border-slate-800 flex flex-col gap-2">
@@ -509,11 +525,11 @@
                     </div>
                     <div class="glass-panel p-2.5 rounded-xl border border-slate-800">
                         <div class="text-[10px] font-mono text-slate-400 uppercase">Avg Turnaround</div>
-                        <div id="metric-avg-tat" class="text-lg font-mono font-extrabold text-sky-400 mt-0.5">0.0t</div>
+                        <div id="metric-avg-tat" class="text-lg font-mono font-extrabold text-sky-400 mt-0.5">0.0ms</div>
                     </div>
                     <div class="glass-panel p-2.5 rounded-xl border border-slate-800">
                         <div class="text-[10px] font-mono text-slate-400 uppercase">Avg Wait Time</div>
-                        <div id="metric-avg-wt" class="text-lg font-mono font-extrabold text-amber-400 mt-0.5">0.0t</div>
+                        <div id="metric-avg-wt" class="text-lg font-mono font-extrabold text-amber-400 mt-0.5">0.0ms</div>
                     </div>
                     <div class="glass-panel p-2.5 rounded-xl border border-slate-800">
                         <div class="text-[10px] font-mono text-slate-400 uppercase">Context Switches</div>
@@ -583,6 +599,20 @@
                     </div>
                 </div>
             </div>
+        </section>
+
+        <section id="step-by-step" class="glass-panel rounded-2xl border border-slate-800 p-3.5 flex flex-col gap-3" aria-label="Step-by-step computation">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                <div>
+                    <h2 class="text-xs sm:text-sm font-bold uppercase tracking-wider text-white flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>📘 Step-by-Step Computation (lecture format)</h2>
+                    <p id="sbs-subtitle" class="text-[11px] text-slate-400 mt-0.5"></p>
+                </div>
+                <div class="flex gap-1.5">
+                    <button onclick="toggleAllSteps(true)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs border border-slate-700">Expand all</button>
+                    <button onclick="toggleAllSteps(false)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs border border-slate-700">Collapse all</button>
+                </div>
+            </div>
+            <div id="step-by-step-body" class="flex flex-col gap-3"></div>
         </section>
     </main>
 
@@ -733,13 +763,16 @@
         };
 
         // Deep-cloned state snapshots for the Time Machine scrubber
+        let SILENT_SIM = false;   // true while the step-by-step planner replays the workload offline
         let historySnapshots = [];
         let playInterval = null;
         let currentPCBFilter = 'ALL';
         let currentViewMode = 'split';
 
         // Default Preset Scenarios (Satisfies Specific Objective 4)
+        const AUTO_DEADLOCK = { autodeadlock: { atTick: 3, watchdog: 3 } };   // detect at T>=3, kernel watchdog recovers after 3 ms
         const SCENARIO_INFO = {
+            autodeadlock: 'Case 13: AUTOMATIC deadlock. It happens by itself at T=3 and the kernel watchdog recovers it',
             standard: 'Case 1: a normal mix of trains',
             simultaneous: 'Case 2: four trains arrive at once',
             iostress: 'Case 3: station boarding stress. Try Round Robin and press Station Boarding',
@@ -823,6 +856,13 @@
                 { pid: 'LRT-D04', name: 'Queued Commuter D', arrival: 1, burst: 2, priority: 3 },
                 { pid: 'MRT-D05', name: 'Queued Commuter E', arrival: 2, burst: 5, priority: 4 }
             ],
+            autodeadlock: [
+                { pid: 'MRT-E01', name: 'Southbound Express', arrival: 0, burst: 5, priority: 1 },
+                { pid: 'LRT-E02', name: 'Northbound Express', arrival: 1, burst: 4, priority: 1 },
+                { pid: 'LRT-E03', name: 'Airport Shuttle', arrival: 2, burst: 3, priority: 2 },
+                { pid: 'MRT-E04', name: 'Local Commuter', arrival: 4, burst: 2, priority: 3 },
+                { pid: 'LRT-E05', name: 'Night Service', arrival: 6, burst: 3, priority: 2 }
+            ],
             deadlock: [
                 { pid: 'MRT-901', name: 'Southbound Interlock A', arrival: 0, burst: 4, priority: 1 },
                 { pid: 'LRT-902', name: 'Northbound Interlock B', arrival: 0, burst: 4, priority: 1 },
@@ -847,7 +887,7 @@
                 completionTick: null,
                 waitingTime: 0,
                 turnaroundTime: 0,
-                queueOrder: indexOrder,
+                queueOrder: Number(raw.arrival) + indexOrder * 0.001,   // FIFO by arrival time
                 // Telemetry Registers
                 pcSector: initialState === 'READY' ? 'SEC-APPROACH' : 'SEC-DEPOT',
                 speedKmh: 0,
@@ -933,6 +973,8 @@
                 deadlockActive: false,
                 deadlockPair: [],
                 activeRunningPid: null,
+                autoDeadlock: AUTO_DEADLOCK[scenarioKey] ? Object.assign({}, AUTO_DEADLOCK[scenarioKey], { fired: false, stalled: 0 }) : null,
+                skipProgressOnce: false,
                 pcbList: rawList.map((item, idx) => {
                     const p = createPCBObject(item, idx);
                     syncTrainTCBAndRegisters(p);
@@ -976,6 +1018,12 @@
                     mode: 'KERNEL'
                 });
                 addKernelLog('KERNEL', 'sys_deadlock_trap()', `Junction blocked at T=${osState.tick}: Circular wait between ${osState.deadlockPair.join(' ↔ ')}.`);
+                const wd = osState.autoDeadlock;
+                if (wd && wd.fired && wd.watchdog > 0) {
+                    wd.stalled += 1;
+                    if (wd.stalled >= wd.watchdog) recoverFromDeadlock();
+                    else osState.whyExplanation += ` Kernel watchdog will recover it in ${wd.watchdog - wd.stalled} ms (or click "Execute Kernel Preemption" now).`;
+                }
                 saveSnapshotAndRender();
                 return;
             }
@@ -990,7 +1038,8 @@
             const T = osState.tick;
 
             // 2. Progress any currently RUNNING train from the previous tick
-            if (osState.activeRunningPid) {
+            const skipProg = osState.skipProgressOnce; osState.skipProgressOnce = false;   // a train resuming after deadlock recovery did not execute last tick
+            if (osState.activeRunningPid && !skipProg) {
                 const runningTrain = osState.pcbList.find(p => p.pid === osState.activeRunningPid);
                 if (runningTrain && runningTrain.state === 'RUNNING') {
                     runningTrain.remaining -= 1;
@@ -999,8 +1048,8 @@
                     if (runningTrain.remaining <= 0) {
                         runningTrain.remaining = 0;
                         runningTrain.state = 'TERMINATED';
-                        runningTrain.completionTick = T;
-                        runningTrain.turnaroundTime = T - runningTrain.arrival;
+                        runningTrain.completionTick = T - 1;   // last executed slot ended at T-1
+                        runningTrain.turnaroundTime = (T - 1) - runningTrain.arrival;
                         runningTrain.waitingTime = Math.max(0, runningTrain.turnaroundTime - runningTrain.burst);
                         osState.activeRunningPid = null;
                         osState.currentQuantumUsed = 0;
@@ -1009,6 +1058,28 @@
                         notes.push(`${runningTrain.pid} completed its track clearance (Terminated at T=${T}).`);
                         addKernelLog('KERNEL', 'sys_exit()', `${runningTrain.pid} cleared the Central Interlocking Junction (TAT=${runningTrain.turnaroundTime}t, WT=${runningTrain.waitingTime}t).`);
                     }
+                }
+            }
+
+            // 2b. AUTOMATIC DEADLOCK: the running train holds the North switch, the next train grabs the South switch, each waits for the other
+            const ad = osState.autoDeadlock;
+            if (ad && !ad.fired && T >= ad.atTick && osState.activeRunningPid) {
+                const holder = osState.pcbList.find(p => p.pid === osState.activeRunningPid);
+                const rivals = osState.pcbList.filter(p => p.state === 'READY' && p.arrival <= T - 1);
+                if (holder && holder.state === 'RUNNING' && rivals.length) {
+                    const victim = selectNextTrain(rivals);
+                    ad.fired = true; ad.stalled = 1;
+                    victim.state = 'RUNNING';
+                    osState.deadlockActive = true; osState.deadlockPair = [holder.pid, victim.pid];
+                    osState.activeRunningPid = null; osState.currentQuantumUsed = 0;
+                    osState.cpuMode = 'KERNEL'; osState.lastSyscall = 'sys_deadlock_alert()';
+                    osState.whyExplanation = `AUTOMATIC DEADLOCK at T=${T}: ${holder.pid} holds the North Switch and waits for the South Switch, while ${victim.pid} holds the South Switch and waits for the North Switch. All 4 Coffman conditions are met. Kernel watchdog will recover it in ${Math.max(0, ad.watchdog - 1)} ms (or click "Execute Kernel Preemption" now).`;
+                    osState.pcbList.forEach(p => syncTrainTCBAndRegisters(p));
+                    addKernelLog('KERNEL', 'sys_deadlock_alert()', `CRITICAL: automatic detection of circular wait between ${holder.pid} and ${victim.pid} at T=${T}.`);
+                    osState.ganttHistory.push({ tick: T, pid: 'GRIDLOCK', state: 'DEADLOCKED', mode: 'KERNEL' });
+                    if (ad.watchdog > 0 && ad.stalled >= ad.watchdog) recoverFromDeadlock();
+                    saveSnapshotAndRender();
+                    return;
                 }
             }
 
@@ -1043,10 +1114,10 @@
             if (osState.algorithm === 'RR' && osState.activeRunningPid) {
                 const runningTrain = osState.pcbList.find(p => p.pid === osState.activeRunningPid);
                 if (runningTrain && runningTrain.state === 'RUNNING' && osState.currentQuantumUsed >= osState.timeQuantum) {
-                    const otherReady = osState.pcbList.filter(p => p.state === 'READY');
+                    const otherReady = osState.pcbList.filter(p => p.state === 'READY' && p.arrival <= T - 1);
                     if (otherReady.length > 0) {
                         runningTrain.state = 'READY';
-                        runningTrain.queueOrder = T + 0.2; // Move to tail of RR queue
+                        runningTrain.queueOrder = (T - 1) + 0.2; // tail of RR queue: behind arrivals up to this decision time, ahead of later ones
                         osState.activeRunningPid = null;
                         osState.currentQuantumUsed = 0;
                         modeThisTick = 'KERNEL';
@@ -1063,7 +1134,7 @@
             // 6. Select a train from READY queue if CPU (Central Junction) is free
             let decisionReason = '';
             if (!osState.activeRunningPid) {
-                const readyTrains = osState.pcbList.filter(p => p.state === 'READY');
+                const readyTrains = osState.pcbList.filter(p => p.state === 'READY' && p.arrival <= T - 1);
                 if (readyTrains.length > 0) {
                     const selected = selectNextTrain(readyTrains);
                     selected.state = 'RUNNING';
@@ -1095,7 +1166,7 @@
 
             // 7. Increment waiting time for all trains currently sitting in READY state
             osState.pcbList.forEach(train => {
-                if (train.state === 'READY') {
+                if (train.state === 'READY' && train.arrival < T) {
                     train.waitingTime += 1;
                 }
                 syncTrainTCBAndRegisters(train);
@@ -1237,7 +1308,7 @@
             refreshAllUI();
         }
 
-        function resolveTrackGridlock() {
+        function recoverFromDeadlock() {
             if (!osState.deadlockActive) return;
 
             const [pidA, pidB] = osState.deadlockPair;
@@ -1256,13 +1327,19 @@
             }
 
             osState.contextSwitches += 1;
+            osState.skipProgressOnce = true;
+            if (osState.autoDeadlock) osState.autoDeadlock.stalled = 0;
             osState.cpuMode = 'KERNEL';
             osState.lastSyscall = 'sys_deadlock_recover()';
             osState.whyExplanation = `DEADLOCK RESOLVED: Kernel broke the Circular Wait & No-Preemption conditions by rolling ${pidB} back to the approach siding (READY) and granting exclusive Central Junction lock to ${pidA}!`;
 
             osState.pcbList.forEach(p => syncTrainTCBAndRegisters(p));
             addKernelLog('KERNEL', 'sys_deadlock_recover()', `Preempted ${pidB} to siding; restored junction clearance to ${pidA}.`);
+        }
 
+        function resolveTrackGridlock() {
+            if (!osState.deadlockActive) return;
+            recoverFromDeadlock();
             historySnapshots[historySnapshots.length - 1] = deepClone(osState);
             refreshAllUI();
         }
@@ -1275,6 +1352,7 @@
         }
 
         function saveSnapshotAndRender() {
+            if (SILENT_SIM) return;
             // Truncate any future branch if user rewound and stepped forward
             if (historySnapshots.length > osState.tick) {
                 historySnapshots = historySnapshots.slice(0, osState.tick);
@@ -1354,6 +1432,7 @@
         }
 
         function addKernelLog(mode, syscall, msg) {
+            if (SILENT_SIM) return;
             osState.syscallLogs.unshift({
                 tick: osState.tick,
                 mode,
@@ -1558,6 +1637,8 @@
             renderPCBTable();
             renderGanttChart();
             renderMetricsAndDeadlockCard();
+            renderFormulaBox();
+            renderStepByStep();
             renderKernelLogs();
             update3DTrainTargets();
         }
@@ -1579,52 +1660,200 @@
                 const visualState = isDeadlocked ? 'DEADLOCKED' : p.state;
                 const colorInfo = STATE_COLORS[visualState] || STATE_COLORS.NEW;
                 const donePct = Math.round(((p.burst - p.remaining) / p.burst) * 100);
-
+                const done = p.state === 'TERMINATED';
+                const dash = '<span class="text-slate-500">—</span>';
+                const ct = done ? p.completionTick : dash, tat = done ? p.turnaroundTime : dash;
+                const wt = done ? p.waitingTime : (p.state === 'NEW' ? dash : `<span class="text-slate-400 italic" title="waiting so far">${p.waitingTime}…</span>`);
                 return `
-                    <tr data-pid="${p.pid}" tabindex="0" onkeydown="if(event.key==='Enter')focusTrain('${p.pid}')" onclick="focusTrain('${p.pid}')" class="cursor-pointer hover:bg-slate-800/50 transition ${p.state === 'RUNNING' ? 'bg-emerald-950/20' : ''}">
-                        <td class="py-2 px-2.5 font-mono">
-                            <div class="font-bold text-white flex items-center gap-1.5">
-                                <span class="w-2 h-2 rounded-full" style="background:${colorInfo.css}"></span>
-                                <span>${p.pid}</span>
-                            </div>
-                            <div class="text-[11px] text-slate-400 font-sans truncate max-w-[140px]">${p.name}</div>
+                    <tr data-pid="${p.pid}" tabindex="0" onkeydown="if(event.key==='Enter')focusTrain('${p.pid}')" onclick="focusTrain('${p.pid}')" class="cursor-pointer transition">
+                        <td class="font-mono text-left">
+                            <div class="font-bold text-white flex items-center gap-1.5"><span class="w-2 h-2 rounded-full" style="background:${colorInfo.css}"></span>${p.pid}</div>
+                            <div class="text-[11px] text-slate-400 font-sans truncate max-w-[130px]">${p.name}</div>
                         </td>
-                        <td class="py-2 px-2">
-                            <span class="px-2 py-0.5 rounded border text-[10px] font-mono font-bold ${colorInfo.badge}">
-                                ${visualState}
-                            </span>
+                        <td class="font-mono font-bold text-white">${p.arrival}</td>
+                        <td class="font-mono font-bold text-white">${p.burst}</td>
+                        <td class="font-mono font-bold text-sky-300">${ct}</td>
+                        <td class="font-mono font-bold text-emerald-300">${tat}</td>
+                        <td class="font-mono font-bold text-amber-300">${wt}</td>
+                        <td class="grp"><span class="px-2 py-0.5 rounded border text-[10px] font-mono font-bold ${colorInfo.badge}">${visualState}</span></td>
+                        <td class="font-mono text-sky-300">P${p.priority}</td>
+                        <td class="font-mono">
+                            <div class="text-[11px]"><b class="text-white">${p.remaining}</b><span class="text-slate-400"> / ${p.burst}</span></div>
+                            <div class="w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden mx-auto mt-0.5"><div class="h-full" style="width:${donePct}%;background:${colorInfo.css}"></div></div>
                         </td>
-                        <td class="py-2 px-2 text-center font-mono font-bold text-sky-300">P${p.priority}</td>
-                        <td class="py-2 px-2 text-center font-mono text-slate-300">T=${p.arrival}</td>
-                        <td class="py-2 px-2.5 font-mono">
-                            <div class="flex items-center justify-between text-[11px] mb-1">
-                                <span class="text-white font-bold">${p.remaining}t left</span>
-                                <span class="text-slate-400">/ ${p.burst}t</span>
-                            </div>
-                            <div class="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                <div class="h-full transition-all duration-300" style="width:${donePct}%; background:${colorInfo.css}"></div>
-                            </div>
+                        <td class="font-mono text-[10px] text-left">
+                            <div class="text-emerald-300">Prop: ${p.threads.propulsion}</div>
+                            <div class="text-purple-300">Doors: ${p.threads.doors}</div>
+                            <div class="text-slate-400">${p.pcSector} • ${p.speedKmh} km/h</div>
                         </td>
-                        <td class="py-2 px-2 font-mono text-[10px] text-slate-300">
-                            <div>PC: <span class="text-sky-300">${p.pcSector}</span></div>
-                            <div>SPD: <span class="text-emerald-300">${p.speedKmh} km/h</span> • ${p.voltage}</div>
-                        </td>
-                        <td class="py-2 px-2.5 font-mono text-[10px]">
-                            <div class="flex flex-wrap gap-1">
-                                <span class="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-emerald-300">Prop: ${p.threads.propulsion}</span>
-                                <span class="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-purple-300">Doors: ${p.threads.doors}</span>
-                            </div>
-                        </td>
-                        <td class="py-2 px-2 text-right">
-                            ${(p.state === 'RUNNING' || p.state === 'READY') ? `
-                                <button onclick="triggerStationBoardingIO('${p.pid}')" class="px-2 py-1 rounded bg-purple-900/70 hover:bg-purple-700 text-purple-200 border border-purple-500/40 font-mono text-[10px] transition" title="Trigger Station Boarding I/O Wait">
-                                    🚏 I/O Wait
-                                </button>
-                            ` : `<span class="text-[10px] font-mono text-slate-500">—</span>`}
-                        </td>
-                    </tr>
-                `;
+                        <td>${(p.state === 'RUNNING' || p.state === 'READY') ? `<button onclick="event.stopPropagation();triggerStationBoardingIO('${p.pid}')" class="px-2 py-1 rounded bg-purple-900/70 hover:bg-purple-700 text-purple-200 border border-purple-500/40 font-mono text-[10px]" title="Send this train to the station for I/O wait">🚏 I/O</button>` : `<span class="text-slate-500">—</span>`}</td>
+                    </tr>`;
             }).join('');
+        }
+
+
+        /* ===================== STEP-BY-STEP COMPUTATION (lecture format) =====================
+           The planner replays the CURRENT workload through the very same stepForward() engine
+           (silently, on a copy), so the numbers always match the live simulation. */
+        const PID_COLORS = ['#38bdf8', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#fb923c', '#2dd4bf', '#f87171'];
+        let planCache = { key: '', plan: null }, lastStepKey = '';
+
+        function computePlan() {
+            const raw = osState.pcbList.map(p => ({ pid: p.pid, name: p.name, arrival: p.arrival, burst: p.burst, priority: p.priority }));
+            const key = JSON.stringify([raw, osState.algorithm, osState.timeQuantum, osState.autoDeadlock ? [osState.autoDeadlock.atTick, osState.autoDeadlock.watchdog] : null]);
+            if (planCache.key === key) return planCache.plan;
+            const saved = osState; SILENT_SIM = true; let plan = null;
+            try {
+                osState = Object.assign(deepClone(saved), {
+                    tick: 0, currentQuantumUsed: 0, deadlockActive: false, deadlockPair: [], activeRunningPid: null, contextSwitches: 0, ganttHistory: [], syscallLogs: [], skipProgressOnce: false,
+                    autoDeadlock: saved.autoDeadlock ? { atTick: saved.autoDeadlock.atTick, watchdog: saved.autoDeadlock.watchdog, fired: false, stalled: 0 } : null,
+                    pcbList: raw.map((r, i) => { const p = createPCBObject(r, i); syncTrainTCBAndRegisters(p); return p; })
+                });
+                let guard = 0;
+                let dl = null;
+                while (!osState.pcbList.every(p => p.state === 'TERMINATED') && guard++ < 500) {
+                    stepForward();
+                    if (osState.deadlockActive && !dl) dl = { pair: osState.deadlockPair.slice(), start: osState.tick - 1, end: null };
+                    else if (!osState.deadlockActive && dl && dl.end === null) dl.end = osState.tick;
+                }
+                const procs = osState.pcbList.map((p, i) => ({ pid: p.pid, name: p.name, at: p.arrival, bt: p.burst, pr: p.priority, ct: p.completionTick, tat: p.turnaroundTime, wt: p.waitingTime, color: PID_COLORS[i % PID_COLORS.length] }));
+                const end = Math.max(0, ...procs.map(p => p.ct || 0));
+                const segs = [];
+                osState.ganttHistory.filter(g => g.tick <= end).forEach(g => {
+                    const last = segs[segs.length - 1];
+                    if (last && last.pid === g.pid && last.end === g.tick - 1) last.end = g.tick; else segs.push({ pid: g.pid, start: g.tick - 1, end: g.tick });
+                });
+                plan = { procs, segs, end, dl, algo: saved.algorithm, q: saved.timeQuantum, ok: guard < 500 };
+            } finally { osState = saved; SILENT_SIM = false; }
+            planCache = { key, plan };
+            return plan;
+        }
+
+        function planChart(plan, t, arrivals) {
+            const L = plan.end || 1, pct = v => (v / L * 100).toFixed(3);
+            let bars = '', ticks = [0];
+            plan.segs.forEach(sg => {
+                if (sg.start >= t) return;
+                const e = Math.min(sg.end, t), idle = sg.pid === 'IDLE', dead = sg.pid === 'GRIDLOCK', pr = plan.procs.find(p => p.pid === sg.pid);
+                bars += `<div style="position:absolute;top:0;bottom:0;left:${pct(sg.start)}%;width:${pct(e - sg.start)}%;background:${dead ? '#dc2626' : idle ? '#334155' : pr.color};border-right:2px solid #020617" class="flex items-center justify-center text-[11px] font-mono font-bold ${dead ? 'text-white' : idle ? 'text-slate-300' : 'text-slate-950'} overflow-hidden whitespace-nowrap">${dead ? 'DEADLOCK' : idle ? 'IDLE' : sg.pid}</div>`;
+                ticks.push(e);
+            });
+            ticks.push(t);
+            const kept = []; [...new Set(ticks)].sort((a, b) => a - b).forEach(v => { if (!kept.length || v === t || v - kept[kept.length - 1] >= L * 0.035) { if (kept.length && v === t && v - kept[kept.length - 1] < L * 0.035) kept.pop(); kept.push(v); } });
+            const labels = kept.map(v => `<span class="absolute font-mono text-[11px] text-slate-200" style="top:38px;left:${pct(v)}%;transform:translateX(-50%)">${v}</span>`).join('');
+            const marks = arrivals.map(p => `<span class="absolute font-mono text-[10px] text-amber-300 whitespace-nowrap" style="top:54px;left:${pct(t)}%;transform:translateX(${t / L > 0.85 ? '-100%' : '-12px'})">↑ ${p.pid} arrives</span>`).join('');
+            return `<div class="px-4"><div class="relative" style="height:${arrivals.length ? 74 : 58}px"><div class="absolute inset-x-0 top-0 rounded border border-slate-500 bg-slate-950/70" style="height:32px">${bars}</div>${labels}${marks}</div></div>`;
+        }
+
+        function buildSteps(plan) {
+            const { procs, segs, q } = plan, by = Object.fromEntries(procs.map(p => [p.pid, p]));
+            const execBy = (pid, t) => segs.filter(x => x.pid === pid).reduce((a, x) => a + Math.max(0, Math.min(x.end, t) - x.start), 0);
+            const firstAT = Math.min(...procs.map(p => p.at)), firstP = procs.filter(p => p.at === firstAT)[0];
+            const times = new Set([0]); procs.forEach(p => { if (p.at <= plan.end) times.add(p.at); }); segs.forEach(x => { times.add(x.start); times.add(x.end); });
+            const steps = [];
+            [...times].sort((a, b) => a - b).forEach(t => {
+                const lines = [], arrivals = procs.filter(p => p.at === t);
+                if (t === firstAT) lines.push(`The process begins with the first Arrival Time (in this case ${firstP.pid}, which has an arrival time of ${firstAT}).`);
+                segs.filter(x => x.end === t && x.pid !== 'IDLE' && x.pid !== 'GRIDLOCK').forEach(x => {
+                    if (segs.some(y => y.pid === 'GRIDLOCK' && y.start === t)) return;   // the deadlock line explains this
+                    const p = by[x.pid];
+                    if (p.ct === t) lines.push(`${p.pid} has used up its burst time, so its CT = ${t}. (TAT = CT − AT = ${t} − ${p.at} = ${p.tat}; WT = TAT − BT = ${p.tat} − ${p.bt} = ${p.wt}.)`);
+                    else lines.push(`Time quantum (Q=${q}) of ${p.pid} is used up at time=${t}. It still needs ${p.bt - execBy(p.pid, t)} more, so it goes to the back of the ready queue.`);
+                });
+                arrivals.forEach(p => {
+                    if (t === firstAT && p === firstP) return;   // already said in the opening line
+                    const run = segs.find(x => x.pid !== 'IDLE' && x.start < t && t < x.end);
+                    lines.push(run && run.pid === 'GRIDLOCK' ? `At time=${t}, ${p.pid} arrives. The junction is deadlocked, hence ${p.pid} is kept in the ready queue.` : run ? `At time=${t}, ${p.pid} arrives. ${run.pid} is still not done executing, hence ${p.pid} is kept in the ready queue.` : `At time=${t}, ${p.pid} arrives.`);
+                });
+                if (plan.dl && t === plan.dl.start) lines.push(`⚠ DEADLOCK at time=${t}: ${plan.dl.pair[0]} holds the North Switch and waits for the South Switch, while ${plan.dl.pair[1]} holds the South Switch and waits for the North Switch. This is a Circular Wait and all 4 Coffman conditions are met, so the junction (CPU) is stuck and no train can run.`);
+                if (plan.dl && plan.dl.end !== null && t === plan.dl.end) lines.push(`The kernel watchdog recovers the deadlock at time=${t} (junction stalled for ${plan.dl.end - plan.dl.start} ms, which is wasted CPU time): ${plan.dl.pair[1]} is rolled back to the ready queue and ${plan.dl.pair[0]} gets the junction back.`);
+                segs.filter(x => x.start === t).forEach(x => {
+                    if (x.pid === 'GRIDLOCK') return;
+                    if (plan.dl && t === plan.dl.end && x.pid === plan.dl.pair[0]) { lines.push(`${x.pid} resumes executing at time=${t} (it won the junction after kernel preemption).`); return; }
+                    if (x.pid === 'IDLE') { lines.push(`No train is in the ready queue, so the junction (CPU) stays IDLE from time=${x.start} to time=${x.end}.`); return; }
+                    const p = by[x.pid], rivals = procs.filter(r => r.pid !== p.pid && r.at <= t && execBy(r.pid, t) < r.bt);
+                    let why = 'it is the only train in the ready queue';
+                    if (rivals.length) why = { FCFS: `it arrived first among the waiting trains (AT=${p.at})`, SJF: `it has the shortest remaining burst time (${p.bt - execBy(p.pid, t)})`, PRIORITY: `it has the highest priority (priority ${p.pr}; a lower number means higher priority)`, RR: `it is at the front of the round-robin queue` }[plan.algo];
+                    lines.push(`${p.pid} starts executing at time=${t} because ${why}.`);
+                });
+                if (!lines.length) return;
+                const runNow = segs.find(x => x.pid !== 'IDLE' && x.start <= t && t < x.end), inDL = runNow && runNow.pid === 'GRIDLOCK';
+                const waiting = procs.filter(p => p.at <= t && execBy(p.pid, t) < p.bt && (!runNow || runNow.pid !== p.pid) && !(inDL && plan.dl.pair.includes(p.pid))).map(p => p.pid);
+                if (waiting.length) lines.push(`Ready queue now: ${waiting.join(', ')}.`);
+                steps.push({ t, lines, arrivals });
+            });
+            return steps;
+        }
+
+        function renderStepByStep() {
+            const body = document.getElementById('step-by-step-body'); if (!body) return;
+            const plan = computePlan(), key = planCache.key;
+            if (key !== lastStepKey) {
+                lastStepKey = key;
+                document.getElementById('sbs-subtitle').textContent = `Algorithm: ${plan.algo}${plan.algo === 'RR' ? ' (Q=' + plan.q + ')' : ''}. Planned run of the current train list (without manual I/O${osState.autoDeadlock ? '; the automatic deadlock IS included' : ' or deadlock'}), computed by the same scheduler engine. 1 ms = 1 clock tick. The last two cards count live while the trains run.`;
+                const steps = buildSteps(plan);
+                const card = (title, inner, t) => `<details class="step rounded-xl border border-slate-700 bg-slate-950/60" open data-step-t="${t}"><summary class="flex items-center gap-2 px-3 py-2 text-xs font-bold text-white">${title}<span class="step-badge ml-auto text-[10px] font-mono px-2 py-0.5 rounded"></span></summary><div class="px-3 pb-3">${inner}</div></details>`;
+                let html = steps.map((st, i) => card(`Step ${i + 1} <span class="font-mono text-slate-400 font-normal">• time = ${st.t}</span>`, `<ul class="list-disc pl-5 space-y-1 text-xs text-slate-200 leading-relaxed">${st.lines.map(l => `<li>${l}</li>`).join('')}</ul>${planChart(plan, st.t, st.arrivals)}`, st.t)).join('');
+                html += card('Final Gantt chart', planChart(plan, plan.end, []), plan.end);
+                html += card('Computing CT, TAT and WT <span class="font-mono text-emerald-300 font-normal">(live)</span>', '<div id="live-ct-table" class="overflow-x-auto"></div>', plan.end);
+                html += card('Averages and CPU utilization <span class="font-mono text-emerald-300 font-normal">(live)</span>', '<div id="live-avg"></div>', plan.end);
+                body.innerHTML = html;
+            }
+            body.querySelectorAll('details.step').forEach(d => {
+                const reached = osState.tick >= +d.dataset.stepT, b = d.querySelector('.step-badge');
+                b.textContent = reached ? '✓ reached in live run' : 'upcoming';
+                b.className = 'step-badge ml-auto text-[10px] font-mono px-2 py-0.5 rounded ' + (reached ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800 text-slate-400');
+            });
+            renderLiveComputation();
+        }
+        function toggleAllSteps(open) { document.querySelectorAll('#step-by-step-body details').forEach(d => d.open = open); }
+
+        /* ===== LIVE AVERAGES (update every tick while trains are simulating) =====
+           Finished train: its real TAT / WT.  Arrived-but-unfinished train: TAT = now - AT, WT = TAT - burst executed so far. */
+        function liveStats() {
+            const T = osState.tick, gh = osState.ganttHistory, list = osState.pcbList, N = list.length;
+            const allDone = N > 0 && list.every(p => p.state === 'TERMINATED');
+            const rows = list.filter(p => p.arrival <= T || p.state !== 'NEW').map(p => {
+                const done = p.state === 'TERMINATED', exec = gh.filter(g => g.pid === p.pid).length;
+                const tat = done ? p.turnaroundTime : Math.max(0, T - p.arrival);
+                return { p, done, exec, tat, wt: done ? p.waitingTime : Math.max(0, tat - exec) };
+            });
+            const n = rows.length, sumTAT = rows.reduce((a, r) => a + r.tat, 0), sumWT = rows.reduce((a, r) => a + r.wt, 0);
+            const elapsed = allDone ? Math.max(...list.map(p => p.completionTick)) : T;
+            const busy = gh.filter(g => g.tick <= elapsed && g.pid !== 'IDLE' && g.pid !== 'GRIDLOCK').length;
+            return { T, N, n, rows, allDone, finished: list.filter(p => p.state === 'TERMINATED').length, sumTAT, sumWT, busy, elapsed,
+                avgTat: n ? sumTAT / n : 0, avgWt: n ? sumWT / n : 0, util: elapsed > 0 ? busy / elapsed * 100 : 0 };
+        }
+        const fmt2 = v => (Math.round(v * 100) / 100).toString();
+
+        function renderFormulaBox() {
+            const box = document.getElementById('formula-box'); if (!box) return;
+            const L = liveStats();
+            const badge = L.allDone ? '<span class="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/40">✓ FINAL</span>' : `<span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40"><span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping mr-1"></span>LIVE • T=${L.T}</span>`;
+            box.innerHTML = `
+                <div class="sm:col-span-3 flex flex-wrap items-center gap-2 text-[11px]">${badge}<span class="text-slate-400">Counting ${L.n} of ${L.N} trains that have arrived (${L.finished} finished). Unfinished trains use TAT = now − AT and WT = TAT − executed burst.</span></div>
+                <div><div class="text-slate-400">Average TAT = sum(TAT) / Pn</div><div class="text-sky-300 font-bold">${L.n ? `${L.sumTAT} / ${L.n} = ${fmt2(L.avgTat)} ms` : '—'}</div></div>
+                <div><div class="text-slate-400">Average WT = sum(WT) / Pn</div><div class="text-amber-300 font-bold">${L.n ? `${L.sumWT} / ${L.n} = ${fmt2(L.avgWt)} ms` : '—'}</div></div>
+                <div><div class="text-slate-400">CPU Utilization = sum(BT) / CT × 100</div><div class="text-emerald-300 font-bold">${L.elapsed ? `${L.busy} / ${L.elapsed} × 100 = ${fmt2(L.util)}%` : '—'}</div></div>`;
+        }
+
+        function renderLiveComputation() {
+            const tb = document.getElementById('live-ct-table'), av = document.getElementById('live-avg'); if (!tb || !av) return;
+            const L = liveStats(), plan = planCache.plan, byPid = Object.fromEntries(L.rows.map(r => [r.p.pid, r]));
+            const dim = v => `<span class="text-slate-500">${v}</span>`;
+            tb.innerHTML = `<table class="lec-table text-xs font-mono"><thead><tr><th>P</th><th>AT</th><th>BT</th><th>CT</th><th>TAT = CT − AT</th><th>WT = TAT − BT</th></tr></thead><tbody>${osState.pcbList.map(p => {
+                const r = byPid[p.pid];
+                if (!r) return `<tr><td class="font-bold text-white">${p.pid}</td><td>${p.arrival}</td><td>${p.burst}</td><td>${dim('…')}</td><td>${dim('not arrived yet')}</td><td>${dim('…')}</td></tr>`;
+                if (r.done) return `<tr><td class="font-bold text-white">${p.pid}</td><td>${p.arrival}</td><td>${p.burst}</td><td class="text-sky-300 font-bold">${p.completionTick}</td><td class="text-emerald-300">${p.completionTick} − ${p.arrival} = <b>${p.turnaroundTime}</b></td><td class="text-amber-300">${p.turnaroundTime} − ${p.burst} = <b>${p.waitingTime}</b></td></tr>`;
+                return `<tr><td class="font-bold text-white">${p.pid}</td><td>${p.arrival}</td><td>${p.burst}</td><td>${dim('…')}</td><td>${dim('so far ' + r.tat)}</td><td>${dim('so far ' + r.wt)}</td></tr>`;
+            }).join('')}</tbody></table>`;
+            const badge = L.allDone ? '✓ FINAL' : `● LIVE • T=${L.T}`;
+            av.innerHTML = `<div class="text-[11px] font-mono mb-2 ${L.allDone ? 'text-cyan-300' : 'text-emerald-300'}">${badge}: counting ${L.n} of ${L.N} trains</div>
+                <ul class="space-y-2 text-xs font-mono text-slate-200">
+                    <li><b class="text-sky-300">Average TAT</b> = sum(TAT) / Pn = ${L.sumTAT} / ${L.n || 0} = <b>${fmt2(L.avgTat)} ms</b></li>
+                    <li><b class="text-amber-300">Average WT</b> = sum(WT) / Pn = ${L.sumWT} / ${L.n || 0} = <b>${fmt2(L.avgWt)} ms</b></li>
+                    <li><b class="text-emerald-300">CPU Utilization</b> = sum(BT) / CT × 100 = ${L.busy} / ${L.elapsed} × 100 = <b>${fmt2(L.util)}%</b></li></ul>
+                ${plan ? `<div class="mt-2 text-[11px] text-slate-400 font-mono">Planned final result (Without Deadlock): Avg TAT ${fmt2(plan.procs.reduce((a, p) => a + p.tat, 0) / plan.procs.length)} ms • Avg WT ${fmt2(plan.procs.reduce((a, p) => a + p.wt, 0) / plan.procs.length)} ms • CPU ${fmt2(plan.procs.reduce((a, p) => a + p.bt, 0) / (plan.end || 1) * 100)}%</div>` : ''}`;
         }
 
         function renderGanttChart() {
@@ -1653,23 +1882,10 @@
         }
 
         function renderMetricsAndDeadlockCard() {
-            // CPU Utilization
-            const totalTicks = osState.ganttHistory.length;
-            const busyTicks = osState.ganttHistory.filter(g => g.pid !== 'IDLE' && g.pid !== 'GRIDLOCK').length;
-            const utilPct = totalTicks > 0 ? Math.round((busyTicks / totalTicks) * 100) : 0;
-
-            // Average Turnaround & Waiting Time
-            const completed = osState.pcbList.filter(p => p.state === 'TERMINATED');
-            const avgTat = completed.length > 0
-                ? (completed.reduce((acc, p) => acc + p.turnaroundTime, 0) / completed.length).toFixed(1)
-                : '0.0';
-            const avgWt = osState.pcbList.length > 0
-                ? (osState.pcbList.reduce((acc, p) => acc + p.waitingTime, 0) / osState.pcbList.length).toFixed(1)
-                : '0.0';
-
-            document.getElementById('metric-cpu-util').textContent = `${utilPct}%`;
-            document.getElementById('metric-avg-tat').textContent = `${avgTat}t`;
-            document.getElementById('metric-avg-wt').textContent = `${avgWt}t`;
+            const ls = liveStats();
+            document.getElementById('metric-cpu-util').textContent = `${+ls.util.toFixed(1)}%`;
+            document.getElementById('metric-avg-tat').textContent = `${ls.avgTat.toFixed(1)}ms`;
+            document.getElementById('metric-avg-wt').textContent = `${ls.avgWt.toFixed(1)}ms`;
             document.getElementById('metric-ctx-switches').textContent = osState.contextSwitches;
 
             // Deadlock Card Status
